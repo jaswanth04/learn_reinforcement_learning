@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>BanditSlipperyWalk — Policy Iteration Lab</title>
+  <link rel="stylesheet" href="style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+</head>
+<body>
+  <header>
+    <h1>BanditSlipperyWalk — Policy Iteration Lab</h1>
+    <p class="subtitle">
+      Configure a stochastic 1D walk, train a Policy Iteration agent, then watch it
+      (or yourself) play. Backend: FastAPI + dynamic programming.
+    </p>
+  </header>
+
+  <main class="layout">
+    <!-- ============ Left column: setup + training ============ -->
+    <div class="col col-config">
+      <section class="card">
+        <h2>1. Environment setup</h2>
+
+        <label class="field">
+          <span>Walk length (n_states)</span>
+          <input id="nStates" type="number" min="3" max="20" value="6" step="1" />
+        </label>
+
+        <label class="field">
+          <span>Start position</span>
+          <input id="startPos" type="number" min="0" max="19" value="3" step="1" />
+        </label>
+
+        <label class="field">
+          <span>Hole position</span>
+          <input id="holePos" type="number" min="0" max="19" value="0" step="1" />
+        </label>
+
+        <label class="field">
+          <span>Goal position</span>
+          <input id="goalPos" type="number" min="0" max="19" value="5" step="1" />
+        </label>
+
+        <div class="field-row">
+          <label class="field">
+            <span>Slip probability</span>
+            <input id="slipProb" type="number" min="0" max="1" value="0.2" step="0.05" />
+          </label>
+          <label class="field">
+            <span>Seed</span>
+            <input id="seed" type="number" value="0" step="1" />
+          </label>
+        </div>
+
+        <div class="field-row">
+          <label class="field">
+            <span>Goal reward</span>
+            <input id="goalReward" type="number" value="1" step="0.1" />
+          </label>
+          <label class="field">
+            <span>Hole reward</span>
+            <input id="holeReward" type="number" value="0" step="0.1" />
+          </label>
+        </div>
+
+        <button id="initBtn" class="primary">Initialize experiment</button>
+      </section>
+
+      <section class="card">
+        <h2>2. Training</h2>
+        <div class="field-row">
+          <label class="field">
+            <span>γ (gamma)</span>
+            <input id="gamma" type="number" min="0" max="1" value="0.99" step="0.01" />
+          </label>
+          <label class="field">
+            <span>Tolerance</span>
+            <input id="tol" type="number" value="1e-6" step="1e-8" />
+          </label>
+        </div>
+        <button id="trainBtn" class="primary" disabled>Train & plot V(s)</button>
+      </section>
+
+      <section class="card">
+        <h2>Session library (registry)</h2>
+        <select id="sessionSelect" disabled></select>
+        <div class="session-meta">
+          <span id="sessionStatus">No sessions yet</span>
+          <button id="refreshSessionsBtn" class="ghost" disabled>Refresh</button>
+        </div>
+        <p class="key-hint">Pick a session to <b>train</b> it or run <b>AI prediction</b>.</p>
+      </section>
+
+      <section class="card log-card">
+        <h2>Status</h2>
+        <div id="statusLine" class="status">Not connected yet — start with Initialize.</div>
+        <div id="errorLine" class="error"></div>
+      </section>
+    </div>
+
+    <!-- ============ Center column: corridor + value plot ============ -->
+    <div class="col col-main">
+      <section class="card">
+        <h2>Corridor</h2>
+        <div id="corridor" class="corridor"></div>
+        <div class="legend">
+          <span class="lg lg-goal">G goal</span>
+          <span class="lg lg-hole">H hole</span>
+          <span class="lg lg-active">A agent</span>
+          <span class="lg lg-arrow">← → policy</span>
+        </div>
+        <div id="lastMove" class="lastmove"></div>
+      </section>
+
+      <section class="card">
+        <h2>Value function (trained)</h2>
+        <div class="chart-wrap">
+          <canvas id="valueChart" height="220"></canvas>
+          <div id="chartFallback" class="hidden"></div>
+        </div>
+      </section>
+    </div>
+
+    <!-- ============ Right column: play the walk ============ -->
+    <div class="col col-play">
+      <section class="card">
+        <h2>3. Play</h2>
+
+        <div class="mode-toggle">
+          <label class="mode">
+            <input type="radio" name="mode" value="manual" checked />
+            <span>Manual</span>
+          </label>
+          <label class="mode">
+            <input type="radio" name="mode" value="ai" />
+            <span>AI predict</span>
+          </label>
+        </div>
+
+        <div id="aiControls" class="ai-controls hidden">
+          <label class="field">
+            <span>AI step interval: <b id="aiSpeedLabel">800</b> ms</span>
+            <input id="aiSpeed" type="range" min="150" max="3000" value="800" step="50" />
+          </label>
+          <button id="aiRunBtn" class="primary" disabled>Start AI</button>
+        </div>
+
+        <div id="manualControls" class="manual-controls">
+          <button id="leftBtn" class="move" disabled>&#8592; LEFT</button>
+          <button id="rightBtn" class="move" disabled>RIGHT &#8594;</button>
+        </div>
+        <p class="key-hint">Keyboard: press &#8592; / &#8594; to move in Manual mode.</p>
+
+        <button id="resetEpisodeBtn" class="ghost" disabled>Reset episode</button>
+
+        <div class="stats">
+          <div class="stat"><span>State</span><b id="statState">—</b></div>
+          <div class="stat"><span>Steps</span><b id="statSteps">0</b></div>
+          <div class="stat"><span>Reward</span><b id="statReward">0</b></div>
+          <div class="stat"><span>Result</span><b id="statResult">—</b></div>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

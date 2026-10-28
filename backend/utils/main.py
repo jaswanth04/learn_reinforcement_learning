@@ -2,13 +2,13 @@
 
 import numpy as np
 
-from bandit_slippery_walk import BanditSlipperyWalk
-from bandit_walk import BanditWalk
-from display import (print_environment, print_policy,
+from utils.bandit_slippery_walk import BanditSlipperyWalk
+from utils.bandit_walk import BanditWalk
+from utils.display import (print_environment, print_policy,
                      print_state_value_function, print_transitions)
-from frozen_lake import DOWN, RIGHT, FrozenLake
-from policy_metrics import mean_return, play_episode, probability_success, std_return
-from models import Environment
+from utils.frozen_lake import DOWN, RIGHT, FrozenLake
+from utils.policy_metrics import mean_return, play_episode, probability_success, std_return
+from utils.models import Environment
 
 
 def fixed_policy(code):

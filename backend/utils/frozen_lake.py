@@ -19,8 +19,8 @@ clamped, so the agent stays put (that stay-branch is merged with any
 real outcome that lands on the same state).
 """
 
-from env_core import EnvCore
-from models import Action, ActionResult
+from utils.env_core import EnvCore
+from utils.models import Action, ActionResult
 
 # Action codes (Gymnasium convention)
 LEFT, DOWN, RIGHT, UP = 0, 1, 2, 3

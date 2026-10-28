@@ -1,7 +1,7 @@
 """Deterministic 1D walk: every action moves exactly one cell."""
 
-from models import ActionResult
-from walk_env import WalkEnv
+from utils.models import ActionResult
+from utils.walk_env import WalkEnv
 
 
 class BanditWalk(WalkEnv):

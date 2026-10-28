@@ -3,7 +3,7 @@
 
 import random
 
-from models import Action, ActionResult
+from utils.models import Action, ActionResult
 
 
 class EnvCore:

@@ -7,7 +7,7 @@ import time
 
 import numpy as np
 
-from models import Environment, Policy
+from utils.models import Environment, Policy
 
 
 def rollouts(env: Environment, pi: Policy, n_episodes: int = 100,

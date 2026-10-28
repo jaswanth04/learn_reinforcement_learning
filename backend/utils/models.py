@@ -1,9 +1,9 @@
 from dataclasses import dataclass
-from typing import Callable, Protocol
+from typing import Callable, Protocol, Any
 
 from numpy.typing import NDArray
 import numpy as np
-
+from enum import StrEnum
 
 @dataclass
 class ActionResult:
@@ -27,6 +27,16 @@ type Policy = Callable[[int], int]              # state -> action code
 type ValueFunction = NDArray[np.float64]        # V[s]
 type QTable = NDArray[np.float64]               # Q[s, a]
 
+
+class EnvironmentType(StrEnum):
+    SlipperyBanditWalk = "SlipperyBanditWalk"
+    FrozenLake = "FrozenLake"
+
+@dataclass
+class ModelCard:
+    name: str
+    envType: EnvironmentType
+    modelParams: dict[str, Any]
 
 class Environment(Protocol):
     """Implemented by BanditWalk, BanditSlipperyWalk and FrozenLake."""

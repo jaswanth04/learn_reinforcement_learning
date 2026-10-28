@@ -4,7 +4,7 @@ import random
 
 import numpy as np
 
-from models import Environment, Policy, QTable, ValueFunction
+from utils.models import Environment, Policy, QTable, ValueFunction
 
 
 # ---------------------------------------------------------------- helpers

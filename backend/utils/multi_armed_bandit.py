@@ -10,8 +10,8 @@ is one complete trial, matching the episodic loop used in the bandit
 learning agents (greedy / epsilon-greedy / optimistic / UCB).
 """
 
-from env_core import EnvCore
-from models import Action, ActionResult
+from utils.env_core import EnvCore
+from utils.models import Action, ActionResult
 
 
 def bernoulli(p: float):
