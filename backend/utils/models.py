@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Callable, Protocol, Any
+from typing import Callable, Protocol, Any, Self
 
 from numpy.typing import NDArray
 import numpy as np
@@ -19,6 +19,14 @@ class Action:
     name: str
     code: int
     symbol: str
+
+class TrainingParameters(Protocol):
+    @classmethod
+    def from_dict(cls, train_params: dict[str, Any]) -> Self: ...
+
+class AgentParameters(Protocol):
+    @classmethod
+    def from_dict(cls, agent_params: dict[str, Any]) -> Self: ...
 
 
 type ProbabilityTransition = dict[int, dict[int, list[ActionResult]]]

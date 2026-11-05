@@ -1,5 +1,8 @@
-class AgentExpection(Exception): 
+class AgentException(Exception): 
     pass
 
-class AgentTrainingException(AgentExpection):
+class AgentTrainingException(AgentException):
+    pass
+
+class AgentInitializationException(AgentException):
     pass

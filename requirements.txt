@@ -1,0 +1,8 @@
+# Backend web app (backend/) — versions verified in the conda env `rl`
+fastapi==0.162.0
+pydantic==2.14.1
+uvicorn[standard]==0.54.0
+numpy==2.5.3
+
+# Jupyter notebooks (notebooks/)
+matplotlib==3.11.2

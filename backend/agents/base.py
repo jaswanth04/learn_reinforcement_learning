@@ -1,11 +1,19 @@
-from typing import Protocol, Any
-from utils.models import ValueFunction
+from typing import Protocol, TypeVar, Any
 
-class Agent(Protocol):
+from utils.models import TrainingParameters, ValueFunction, AgentParameters
+
+T = TypeVar("T", bound=TrainingParameters, contravariant=True)
+P = TypeVar("P", bound=AgentParameters, contravariant=True)
+
+class Agent(Protocol[T]):
 
     @property
-    def name() -> str: ...
+    def name(self) -> str: ...
 
-    def train(self, train_params: dict[str, Any]) -> ValueFunction: ...
+    def train(self, train_params: T) -> ValueFunction: ...
 
     def predict(self, state: int) -> int: ...
+
+
+class AgentFactory(Protocol):
+    def __call__(self, params: Any) -> Agent[Any]: ...

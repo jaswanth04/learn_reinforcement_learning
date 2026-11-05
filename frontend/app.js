@@ -35,6 +35,13 @@ async function apiGet(path) {
   return data;
 }
 
+// WebSocket base, mirroring apiBase(): same-host when served by the backend,
+// a fixed local URL when opened via file://.
+function wsBase() {
+  if (location.hostname === "") return "ws://127.0.0.1:8123";
+  return (location.protocol === "https:" ? "wss://" : "ws://") + location.host;
+}
+
 // ---------- DOM -----------------------------------------------------
 
 const $ = (id) => document.getElementById(id);
@@ -50,6 +57,7 @@ const els = {
   holeReward: $("holeReward"),
   gamma: $("gamma"),
   tol: $("tol"),
+  initPolicy: $("initPolicy"),
   initBtn: $("initBtn"),
   trainBtn: $("trainBtn"),
   statusLine: $("statusLine"),
@@ -71,8 +79,17 @@ const els = {
   statResult: $("statResult"),
   sessionSelect: $("sessionSelect"),
   refreshSessionsBtn: $("refreshSessionsBtn"),
+  loadModelBtn: $("loadModelBtn"),
   sessionStatus: $("sessionStatus"),
   lastMove: $("lastMove"),
+  modelCard: $("modelCard"),
+  bulkCount: $("bulkCount"),
+  bulkRunBtn: $("bulkRunBtn"),
+  bulkSuccess: $("bulkSuccess"),
+  bulkTotal: $("bulkTotal"),
+  bulkRate: $("bulkRate"),
+  bulkSteps: $("bulkSteps"),
+  bulkProgress: $("bulkProgress"),
 };
 
 els.slipProb.addEventListener("blur", () => clampField(els.slipProb, 0, 1, 0.2));
@@ -82,7 +99,9 @@ els.nStates.addEventListener("change", clampEnvFromLength);
 
 const S = {
   expId: null,
+  envId: null,         // env_id of the current environment (for model filtering)
   env: null,           // env descriptor returned by /register_experiment
+  models: [],          // all models from the backend experiment registry
   state: null,         // current walk position
   steps: 0,
   episodeReward: 0,
@@ -91,6 +110,9 @@ const S = {
   training: false,
   value: null,         // V(s) array returned by /train
   policy: null,        // learned action per state (for the corridor arrows)
+  trained: false,
+  bulkRunning: false,
+  wsMsgId: 0,
   mode: "manual",
   aiTimer: null,
 };
@@ -199,7 +221,17 @@ function refreshSessionUI() {
   els.trainBtn.disabled = !active;
   els.aiRunBtn.disabled = !active || S.mode !== "ai";
   els.refreshSessionsBtn.disabled = false;
+  updateBulkButton();
+  updateLoadButton();
   setBusyGame(false);
+}
+
+function updateBulkButton() {
+  els.bulkRunBtn.disabled = !S.env || S.bulkRunning;
+}
+
+function updateLoadButton() {
+  els.loadModelBtn.disabled = !els.sessionSelect.value;
 }
 
 function clearChart() {
@@ -219,36 +251,139 @@ function setSessionStatus(data) {
   els.sessionStatus.className = data.trained ? "ok" : "";
 }
 
+// ---------- Model card + env loading --------------------------------
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => (
+    { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
+  ));
+}
+
+function fmtNum(v) {
+  if (v === undefined || v === null) return "—";
+  if (typeof v === "number") return Number.isInteger(v) ? String(v) : v.toFixed(3);
+  return String(v);
+}
+
+function fmtTrainingParams(tp) {
+  if (!tp) return "—";
+  const parts = [];
+  for (const k of ["gamma", "tolerance", "max_iters", "eval_max_iters", "init_policy"]) {
+    if (tp[k] !== undefined) parts.push(`${k}=${tp[k]}`);
+  }
+  return parts.length ? parts.join(" · ") : "—";
+}
+
+// Fetch a model's environment from the env registry by env_id, falling back to
+// the config stored on the model (agent_params.env_config) for older entries.
+async function fetchEnvConfig(envId, agentParams) {
+  if (envId) {
+    try {
+      const env = await apiGet(`/envs/${encodeURIComponent(envId)}`);
+      return env.config;
+    } catch (_) { /* fall back below */ }
+  }
+  return (agentParams && agentParams.env_config) || null;
+}
+
+async function fetchExperimentDetail(experimentId) {
+  const detail = await apiGet(`/experiments/${encodeURIComponent(experimentId)}`);
+  const envCfg = await fetchEnvConfig(detail.env_id, detail.agent_params);
+  return { detail, envCfg };
+}
+
+function renderModelCard(detail, envCfg) {
+  if (!detail) { els.modelCard.textContent = "No model loaded yet."; return; }
+  const rows = [
+    ["Model", detail.experiment_name],
+    ["Experiment", detail.experiment_id],
+    ["Environment", `${detail.env_type} · ${fmtNum(envCfg && envCfg.n_states)} states`],
+    ["env_id", detail.env_id || "—"],
+    ["Layout", envCfg
+      ? `start ${envCfg.start} · hole ${envCfg.hole} · goal ${envCfg.goal}`
+      : "—"],
+    ["Slip prob", fmtNum(envCfg && envCfg.slip_prob)],
+    ["Rewards", envCfg ? `goal ${fmtNum(envCfg.goal_reward)} · hole ${fmtNum(envCfg.hole_reward)}` : "—"],
+    ["Agent", detail.agent_type],
+    ["Trained", detail.trained ? "yes" : "no"],
+    ["Training", fmtTrainingParams(detail.training_params)],
+    ["Value fn", detail.value && detail.value.length
+      ? `min ${Math.min(...detail.value).toFixed(3)} · max ${Math.max(...detail.value).toFixed(3)}`
+      : "—"],
+  ];
+  els.modelCard.innerHTML = rows
+    .map(([label, value]) => {
+      const empty = value === undefined || value === null || value === "—";
+      const cls = label === "Trained" && !empty && String(value) === "yes"
+        ? "ok" : empty ? "empty" : "";
+      return `<div class="mc-label">${escapeHtml(label)}</div>` +
+             `<div class="mc-value ${cls}">${escapeHtml(value)}</div>`;
+    })
+    .join("");
+}
+
+// Render the model card for whatever experiment is currently active (no side
+// effects on the corridor/stats).
+async function renderCurrentModelCard() {
+  if (!S.expId) return;
+  try {
+    const { detail, envCfg } = await fetchExperimentDetail(S.expId);
+    renderModelCard(detail, envCfg);
+  } catch (_) { /* keep prior card */ }
+}
+
+// Reflect a loaded environment's parameters in the "Environment setup" inputs
+// so the UI always matches the environment currently in use.
+function applyEnvToConfigInputs(envCfg) {
+  if (!envCfg) return;
+  const set = (id, val) => {
+    if (val !== undefined && val !== null) $(id).value = val;
+  };
+  set("nStates", envCfg.n_states);
+  set("startPos", envCfg.start);
+  set("holePos", envCfg.hole);
+  set("goalPos", envCfg.goal);
+  set("goalReward", envCfg.goal_reward);
+  set("holeReward", envCfg.hole_reward);
+  set("slipProb", envCfg.slip_prob);
+  set("seed", envCfg.seed);
+}
+
 // ---------- Session library (experiment registry) -------------------
 
+// List every model stored in the backend experiment registry. These persist in
+// memory across page refreshes; picking one loads the model's own environment.
 async function refreshSessions(selectId) {
   try {
     const data = await apiGet("/experiments");
     const list = data.experiments || [];
+    S.models = list;
     els.sessionSelect.innerHTML = "";
     if (list.length === 0) {
       const opt = document.createElement("option");
       opt.value = "";
-      opt.textContent = "— no sessions yet —";
+      opt.textContent = "— no models yet —";
       els.sessionSelect.appendChild(opt);
-      els.sessionStatus.textContent = "No sessions yet";
+      els.sessionStatus.textContent = "No models registered yet";
       els.sessionStatus.className = "";
     } else {
-      list.forEach((session) => {
+      list.forEach((model) => {
         const opt = document.createElement("option");
-        opt.value = session.experiment_id;
-        opt.textContent = `${session.experiment_name} · ${session.experiment_id.slice(0, 8)}${session.trained ? " ✓" : ""}`;
+        opt.value = model.experiment_id;
+        opt.textContent = `${model.experiment_name} · ${model.experiment_id.slice(0, 8)}${model.trained ? " ✓" : ""}`;
         els.sessionSelect.appendChild(opt);
       });
       if (selectId) els.sessionSelect.value = selectId;
-      els.sessionStatus.textContent = `${list.length} session(s) in registry`;
+      const trained = list.filter((m) => m.trained).length;
+      els.sessionStatus.textContent = `${list.length} model(s) · ${trained} trained`;
       els.sessionStatus.className = "ok";
     }
     els.sessionSelect.disabled = false;
     els.refreshSessionsBtn.disabled = false;
+    updateLoadButton();
     return data;
   } catch (err) {
-    els.sessionStatus.textContent = "Could not load sessions";
+    els.sessionStatus.textContent = "Could not load models";
     els.sessionStatus.className = "bad";
     els.sessionSelect.disabled = true;
     els.refreshSessionsBtn.disabled = false;
@@ -258,33 +393,52 @@ async function refreshSessions(selectId) {
 }
 
 async function selectSession(experimentId) {
+  if (S.bulkRunning) { setError("Wait for bulk prediction to finish first."); return; }
   stopAI();
   setError("");
   if (!experimentId) return;
   try {
-    const data = await apiGet(`/experiments/${experimentId}`);
-    S.expId = data.experiment_id;
-    S.env = data.env;
-    S.value = data.value || null;
-    S.policy = data.policy || null;
+    const { detail, envCfg } = await fetchExperimentDetail(experimentId);
+    if (!envCfg || !envCfg.P) {
+      throw new Error("Selected model has no stored environment to restore.");
+    }
+    S.expId = detail.experiment_id;
+    S.envId = detail.env_id;
+    S.env = envCfg;
+    S.value = detail.value || null;
+    S.policy = null;
+    S.trained = !!detail.trained;
+
+    applyEnvToConfigInputs(envCfg);
+    resetBulkStats();
 
     S.state = S.env.start;
     S.steps = 0;
     S.episodeReward = 0;
     S.finished = false;
 
-    if (S.value) plotValue(S.value); else clearChart();
+    if (S.value) {
+      plotValue(S.value);
+      S.policy = [];
+      for (let s = 0; s < S.env.n_states; s++) {
+        const p = await api("/predict", { experiment_id: S.expId, state: s });
+        S.policy[s] = p.action;
+      }
+    } else {
+      clearChart();
+    }
     renderCorridor();
     updateStats();
-    setSessionStatus(data);
+    setSessionStatus(detail);
+    renderModelCard(detail, envCfg);
     setStatus(
-      `Session loaded: ${data.experiment_name} (${S.expId.slice(0, 8)}).`,
-      data.trained ? "ok" : ""
+      `Model loaded: ${detail.experiment_name} (${S.expId.slice(0, 8)}).`,
+      detail.trained ? "ok" : ""
     );
     refreshSessionUI();
   } catch (err) {
     setError(err.message);
-    setStatus("Failed to load the selected session.", "bad");
+    setStatus("Failed to load the selected model.", "bad");
   }
 }
 
@@ -346,6 +500,7 @@ function sampleOutcome(outcomes) {
 function readEnvConfig() {
   const cfg = {
     name: "BanditSlipperyWalk",
+    env_type: "SlipperyBanditWalk",
     n_states: parseInt(els.nStates.value, 10),
     n_actions: 2,
     start: parseInt(els.startPos.value, 10),
@@ -365,6 +520,9 @@ function readEnvConfig() {
 
 function readTrainParams() {
   return {
+    P: S.env.P,
+    skip_states: S.env.skip_states,
+    init_policy: els.initPolicy.value,
     gamma: parseFloat(els.gamma.value),
     tolerance: parseFloat(els.tol.value),
     max_iters: 1000,
@@ -373,26 +531,38 @@ function readTrainParams() {
 }
 
 async function initExperiment() {
+  if (S.bulkRunning) { setError("Wait for bulk prediction to finish first."); return; }
   stopAI();
   setError("");
   els.initBtn.disabled = true;
   els.initBtn.textContent = "Initializing...";
   try {
     clampEnvFromLength();
+    const cfg = readEnvConfig();
     const data = await api("/register_experiment", {
       agent_type: "PolicyIteration",
-      experiment_name: "bandit_slippery_walk",
-      agent_params: {},
-      env_config: readEnvConfig(),
+      experiment_name: `${cfg.name.toLowerCase()}_n${cfg.n_states}`,
+      env_type: cfg.env_type,
+      agent_params: {
+        name: cfg.name.toLowerCase(),
+        env_type: cfg.env_type,
+        n_states: cfg.n_states,
+        n_actions: cfg.n_actions,
+        env_config: cfg, // round-tripped by the backend so sessions can be restored
+      },
+      env_config: cfg,
     });
     S.expId = data.experiment_id;
-    S.env = data.env;
-    S.state = data.env.start;
+    S.envId = data.env_id;
+    S.env = cfg;
+    S.state = cfg.start;
     S.steps = 0;
     S.episodeReward = 0;
     S.finished = false;
     S.value = null;
     S.policy = null;
+    S.trained = false;
+    resetBulkStats();
 
     clearChart();
     renderCorridor();
@@ -401,6 +571,7 @@ async function initExperiment() {
     els.sessionStatus.textContent = "New session registered — train it to enable AI.";
     els.sessionStatus.className = "ok";
     refreshSessionUI();
+    renderCurrentModelCard();
     setStatus(
       `Experiment ready (id ${S.expId.slice(0, 8)}). ` +
       `Length ${S.env.n_states}, start ${S.state}, hole ${S.env.hole}, goal ${S.env.goal}.`,
@@ -433,10 +604,13 @@ async function trainAgent() {
       policy[s] = p.action;
     }
     S.policy = policy;
+    S.trained = true;
     plotValue(S.value);
     renderCorridor();
+    updateBulkButton();
     await refreshSessions(S.expId);
     setSessionStatus({ experiment_name: "this session", trained: true });
+    renderCurrentModelCard();
     setError("");
     setStatus(`Trained. V ranges ${Math.min(...S.value).toFixed(3)} .. ${Math.max(...S.value).toFixed(3)}.`, "ok");
   } catch (err) {
@@ -584,6 +758,109 @@ function stopAI() {
   els.aiRunBtn.textContent = "Start AI";
 }
 
+// ---------- Bulk prediction ------------------------------------------
+
+function resetBulkStats() {
+  els.bulkSuccess.textContent = "—";
+  els.bulkTotal.textContent = "—";
+  els.bulkRate.textContent = "—";
+  els.bulkSteps.textContent = "—";
+  els.bulkProgress.textContent = "";
+}
+
+function openPredictSocket() {
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket(wsBase() + "/ws/predict");
+    ws.onopen = () => resolve(ws);
+    ws.onerror = () =>
+      reject(new Error("WebSocket prediction channel could not be opened."));
+  });
+}
+
+// Request a single greedy action over the persistent socket; each message is
+// tagged with an id so concurrent/in-flight requests can be matched up.
+function wsPredict(ws, experimentId, state) {
+  return new Promise((resolve, reject) => {
+    const id = ++S.wsMsgId;
+    const timer = setTimeout(() => {
+      ws.removeEventListener("message", onMsg);
+      reject(new Error("Prediction timed out."));
+    }, 15000);
+    function onMsg(e) {
+      let msg;
+      try { msg = JSON.parse(e.data); } catch (_) { return; }
+      if (msg.id === undefined || Number(msg.id) !== id) return;
+      clearTimeout(timer);
+      ws.removeEventListener("message", onMsg);
+      if (msg.error) reject(new Error(msg.error));
+      else resolve(msg.action);
+    }
+    ws.addEventListener("message", onMsg);
+    ws.send(JSON.stringify({ id, experiment_id: experimentId, state }));
+  });
+}
+
+async function runBulkPrediction() {
+  if (S.bulkRunning) return;
+  if (!S.expId || !S.env) { setError("Select a session first."); return; }
+  stopAI();
+  setError("");
+  const total = clampIntField(els.bulkCount, 1, 10000, 100);
+  const expId = S.expId;
+  const env = S.env;
+  S.bulkRunning = true;
+  els.bulkRunBtn.disabled = true;
+  els.bulkRunBtn.textContent = "Running...";
+  setStatus("Bulk predicting — one persistent WebSocket, many lookups.", "ok");
+  els.bulkTotal.textContent = String(total);
+  els.bulkProgress.textContent = `Running 0 / ${total} episodes…`;
+
+  let ws = null;
+  let successes = 0;
+  let totalSteps = 0;
+  const maxSteps = Math.max(200, env.n_states * 50); // safety cap per episode
+  try {
+    ws = await openPredictSocket();
+    for (let ep = 1; ep <= total; ep++) {
+      let state = env.start;
+      let finished = false;
+      let reachedGoal = false;
+      let steps = 0;
+      while (!finished && steps < maxSteps) {
+        const action = await wsPredict(ws, expId, state);
+        const outcome = sampleOutcome(env.P[state][action]);
+        state = outcome.next_state;
+        steps += 1;
+        if (outcome.done) {
+          reachedGoal = state === env.goal;
+          finished = true;
+        }
+      }
+      if (reachedGoal) successes += 1;
+      totalSteps += steps;
+      if (ep === total || ep % 10 === 0) {
+        els.bulkProgress.textContent = `Running ${ep} / ${total} episodes…`;
+        await new Promise((r) => setTimeout(r, 0)); // let the UI repaint
+      }
+    }
+
+    const rate = ((100 * successes) / total).toFixed(1);
+    els.bulkSuccess.textContent = String(successes);
+    els.bulkRate.textContent = rate + "%";
+    els.bulkSteps.textContent = (totalSteps / total).toFixed(1);
+    els.bulkProgress.textContent = `${successes} / ${total} episodes reached the goal (${rate}%)`;
+    setStatus(`Bulk prediction: ${successes}/${total} successes (${rate}%).`, "ok");
+  } catch (err) {
+    setError(err.message);
+    setStatus("Bulk prediction failed.", "bad");
+  } finally {
+    if (ws) { try { ws.close(); } catch (_) { /* noop */ } }
+    S.bulkRunning = false;
+    els.bulkRunBtn.textContent = "Run bulk prediction";
+    updateBulkButton();
+  }
+}
+
 // ---------- Mode / control wiring -----------------------------------
 
 function setMode(mode) {
@@ -603,8 +880,10 @@ els.leftBtn.addEventListener("click", () => takeAction(0));
 els.rightBtn.addEventListener("click", () => takeAction(1));
 els.resetEpisodeBtn.addEventListener("click", resetEpisode);
 
-els.sessionSelect.addEventListener("change", (e) => selectSession(e.target.value));
+els.sessionSelect.addEventListener("change", () => updateLoadButton());
 els.refreshSessionsBtn.addEventListener("click", () => refreshSessions(S.expId));
+els.loadModelBtn.addEventListener("click", () => selectSession(els.sessionSelect.value));
+els.bulkRunBtn.addEventListener("click", runBulkPrediction);
 
 els.aiSpeed.addEventListener("input", () => {
   els.aiSpeedLabel.textContent = els.aiSpeed.value;

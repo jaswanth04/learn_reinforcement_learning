@@ -79,17 +79,15 @@
             <input id="tol" type="number" value="1e-6" step="1e-8" />
           </label>
         </div>
+        <label class="field">
+          <span>Initial policy</span>
+          <select id="initPolicy">
+            <option value="random" selected>random</option>
+            <option value="always_left">always_left</option>
+            <option value="always_right">always_right</option>
+          </select>
+        </label>
         <button id="trainBtn" class="primary" disabled>Train & plot V(s)</button>
-      </section>
-
-      <section class="card">
-        <h2>Session library (registry)</h2>
-        <select id="sessionSelect" disabled></select>
-        <div class="session-meta">
-          <span id="sessionStatus">No sessions yet</span>
-          <button id="refreshSessionsBtn" class="ghost" disabled>Refresh</button>
-        </div>
-        <p class="key-hint">Pick a session to <b>train</b> it or run <b>AI prediction</b>.</p>
       </section>
 
       <section class="card log-card">
@@ -119,6 +117,11 @@
           <canvas id="valueChart" height="220"></canvas>
           <div id="chartFallback" class="hidden"></div>
         </div>
+      </section>
+
+      <section class="card">
+        <h2>Model card</h2>
+        <div id="modelCard" class="modelcard">No model loaded yet.</div>
       </section>
     </div>
 
@@ -160,6 +163,35 @@
           <div class="stat"><span>Reward</span><b id="statReward">0</b></div>
           <div class="stat"><span>Result</span><b id="statResult">—</b></div>
         </div>
+      </section>
+
+      <section class="card">
+        <h2>Session library (registry)</h2>
+        <select id="sessionSelect" disabled></select>
+        <div class="session-meta">
+          <span id="sessionStatus">No sessions yet</span>
+          <button id="refreshSessionsBtn" class="ghost" disabled>Refresh</button>
+        </div>
+        <button id="loadModelBtn" class="primary" disabled>Load model</button>
+        <p class="key-hint">Pick a model and <b>Load model</b> — it restores the model's environment (required for <b>AI predict</b>).</p>
+      </section>
+
+      <section class="card">
+        <h2>Bulk prediction</h2>
+        <label class="field">
+          <span>Episodes to run (success / total)</span>
+          <input id="bulkCount" type="number" min="1" max="10000" value="100" step="1" />
+        </label>
+        <button id="bulkRunBtn" class="primary" disabled>Run bulk prediction</button>
+        <div class="stats">
+          <div class="stat"><span>Success</span><b id="bulkSuccess">—</b></div>
+          <div class="stat"><span>Total</span><b id="bulkTotal">—</b></div>
+        </div>
+        <div class="stats">
+          <div class="stat"><span>Win rate</span><b id="bulkRate">—</b></div>
+          <div class="stat"><span>Avg steps</span><b id="bulkSteps">—</b></div>
+        </div>
+        <p id="bulkProgress" class="key-hint"></p>
       </section>
     </div>
   </main>

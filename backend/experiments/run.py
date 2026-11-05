@@ -1,77 +1,67 @@
+from dataclasses import dataclass
 from typing import Any
 
-from registry.agent_registry import AgentRegistry
-from agents.policy_iteration import PolicyIterationAgent
 from agents.base import Agent
-
-from utils.models import ValueFunction, ActionResult
-
-
-from uuid import uuid4
-
-agent_registry = AgentRegistry()
-
-agent_registry.register("PolicyIteration", PolicyIterationAgent)
+from utils.models import TrainingParameters, ValueFunction
 
 
-def normalize_transitions(P: dict[str, Any]) -> dict[int, dict[int, list[ActionResult]]]:
-    """Convert a JSON-shaped P table (string keys, dict outcomes) into the
-    int-keyed ActionResult form consumed by the agents."""
-    return {
-        int(s): {
-            int(a): [
-                ActionResult(
-                    prob=float(o.get("prob")),
-                    next_state=int(o.get("next_state")),
-                    reward=float(o.get("reward")),
-                    done=bool(o.get("done")),
-                )
-                for o in outcomes
-            ]
-            for a, outcomes in actions.items()
-        }
-        for s, actions in P.items()
-    }
+@dataclass
+class ModelCard:
+    """Snapshot of an experiment, ready to store or inspect."""
+    experiment_id: str
+    experiment_name: str
+    env_type: str
+    agent_type: str
+    agent_params: dict[str, Any]
+    training_params: dict[str, Any]
+    trained: bool
+    value_function: ValueFunction | None = None
+    env_id: str = ""
 
-
+@dataclass(eq=False)
 class Experiment:
-    def __init__(
-        self,
-        experiment_name: str,
-        agent_type: str,
-        agent_params: dict[str, Any],
-        env_config: dict[str, Any] | None = None,
-    ):
-        agent = agent_registry.get_agent(agent_type)
+    experiment_id: str
+    experiment_name: str
+    env_type: str
+    agent_type: str
+    agent: Agent[Any]                              # ready, already-initialized agent
+    agent_params: dict[str, Any]
+    env_id: str = ""
+    training_parameter_class: type[TrainingParameters] | None = None
 
-        self.env_config = dict(env_config or {})
-
-        params = dict(agent_params or {})
-        params.setdefault("name", experiment_name)
-        params.setdefault("env_type", self.env_config.get("name", "generic"))
-        params.setdefault("n_states", self.env_config["n_states"])
-        params.setdefault("n_actions", self.env_config["n_actions"])
-
-        self._initialized_agent: Agent = agent(**params)
-        self.name = experiment_name
-        self.id = str(uuid4())
-        self.trained = False
-        self.value_function: ValueFunction | None = None
-        self.policy: list[int] | None = None
+    # state
+    training_params: dict[str, Any] | None = None
+    trained: bool = False
+    value_function: ValueFunction | None = None
 
     def train(self, train_params: dict[str, Any]) -> ValueFunction:
-        params = dict(train_params or {})
-        params["P"] = normalize_transitions(self.env_config["P"])
-        params.setdefault("skip_states", self.env_config.get("skip_states", []))
+        """Build validated training params (if a class is registered) and run the agent."""
+        if self.training_parameter_class is not None:
+            params_obj = self.training_parameter_class.from_dict(train_params)
+        else:
+            params_obj = train_params
 
-        V = self._initialized_agent.train(params)
+        V = self.agent.train(params_obj)
+
         self.trained = True
         self.value_function = V
-        self.policy = [
-            int(self._initialized_agent.predict(s))
-            for s in range(int(self.env_config["n_states"]))
-        ]
+        self.training_params = dict(train_params)
         return V
 
     def predict(self, state: int) -> int:
-        return self._initialized_agent.predict(state)
+        """Return the greedy action for the given state from the trained agent."""
+        return self.agent.predict(state)
+
+    def model_card(self) -> ModelCard:
+        return ModelCard(
+            experiment_id=self.experiment_id,
+            experiment_name=self.experiment_name,
+            env_type=self.env_type,
+            agent_type=self.agent_type,
+            agent_params=dict(self.agent_params),
+            training_params=dict(self.training_params or {}),
+            trained=self.trained,
+            value_function=self.value_function,
+            env_id=self.env_id,
+        )
+
