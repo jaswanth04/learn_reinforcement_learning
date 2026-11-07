@@ -20,7 +20,7 @@ real outcome that lands on the same state).
 """
 
 from utils.env_core import EnvCore
-from utils.models import Action, ActionResult
+from core.models import Action, ActionResult
 
 # Action codes (Gymnasium convention)
 LEFT, DOWN, RIGHT, UP = 0, 1, 2, 3

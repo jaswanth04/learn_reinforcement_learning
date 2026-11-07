@@ -2,7 +2,7 @@
 
 from typing import Callable, Iterable
 
-from utils.models import ActionMap, Environment, Policy, ProbabilityTransition
+from core.models import ActionMap, Environment, Policy, ProbabilityTransition
 
 
 def is_absorbing(s: int, P: ProbabilityTransition) -> bool:

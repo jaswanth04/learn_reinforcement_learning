@@ -20,7 +20,7 @@ from typing import Any, Callable, Mapping, Protocol
 
 import numpy as np
 
-from utils.models import Environment
+from core.models import Environment
 
 
 @dataclass

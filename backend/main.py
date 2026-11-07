@@ -17,9 +17,15 @@ from agents.policy_iteration import (
     PolicyIterationAgentParameters,
     PolicyIterationTrainingParameters,
 )
+from agents.td import (
+    SarsaAgent,
+    SarsaAgentParameters,
+    SarsaAgentTrainingParameters,
+)
 
 from typing import Any
-from utils.models import ActionResult
+from core.models import ActionResult
+import numpy as np
 
 app = FastAPI()
 
@@ -90,6 +96,7 @@ class ModelCardResponse(BaseModel):
     trained: bool
     value: list[float] | None = None
     env_id: str
+    episodes_trained: int | None = None
 
 
 class ExperimentFilterResponse(BaseModel):
@@ -108,6 +115,7 @@ class ExperimentDetailResponse(BaseModel):
     agent_params: dict[str, Any]
     training_params: dict[str, Any] | None = None
     env_id: str
+    episodes_trained: int | None = None
 
 
 class EnvironmentSummary(BaseModel):
@@ -139,6 +147,12 @@ agent_registry.register(
     PolicyIterationTrainingParameters,
     PolicyIterationAgentParameters,
 )
+agent_registry.register(
+    "Sarsa",
+    SarsaAgent,
+    SarsaAgentTrainingParameters,
+    SarsaAgentParameters,
+)
 
 # Runtime store: initialized agent objects (keyed by agent_id).
 agent_instances = AgentInstanceRegistry(agent_registry)
@@ -146,7 +160,7 @@ agent_instances = AgentInstanceRegistry(agent_registry)
 # Experiments keyed by experiment_id.
 experiments = ExperimentRegistry()
 
-# Environments keyed by env_id (deduplicated by structural fingerprint).
+# Environments keyed by env_id (typed models, deduplicated by structural key).
 environments = EnvironmentRegistry()
 
 
@@ -163,6 +177,7 @@ def _model_card_response(card: ModelCard) -> ModelCardResponse:
         trained=card.trained,
         value=card.value_function.tolist() if card.value_function is not None else None,
         env_id=card.env_id,
+        episodes_trained=card.episodes_trained,
     )
 
 
@@ -209,11 +224,12 @@ def _create_experiment(req: ExperimentRequest) -> Experiment:
     agent_params.setdefault("env_type", req.env_type)
 
     # Environment config may arrive top-level or nested inside agent_params
-    # (frontend compatibility). Store it under one canonical key and give it
-    # a stable env_id (reused for structurally equivalent environments).
+    # (frontend compatibility). env_type selects the environment model, which
+    # parses the config, builds the env, and yields a stable env_id (reused
+    # for structurally equivalent environments).
     env_config = dict(agent_params.get("env_config") or req.env_config or {})
-    agent_params["env_config"] = env_config
-    env_id = environments.get_or_create(env_config)
+    env_id = environments.get_or_create(env_config, env_type=req.env_type)
+    agent_params["env_config"] = environments.get(env_id)
 
     # Resolve the type entry once, then reuse it for both the agent and train params.
     entry = agent_registry.get_agent(req.agent_type)
@@ -255,6 +271,8 @@ def register_experiment(req: ExperimentRequest) -> RegisterExperimentResponse:
             experiment_id=experiment.experiment_id,
             env_id=experiment.env_id,
         )
+    except (RegistryException, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=f"Registration failed: {exc}")
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Registration failed: {exc}")
 
@@ -324,6 +342,7 @@ def get_experiment(experiment_id: str) -> ExperimentDetailResponse:
         agent_params=experiment.agent_params,
         training_params=experiment.training_params,
         env_id=env_id,
+        episodes_trained=getattr(experiment.agent, "episodes_trained", None),
     )
 
 
@@ -419,6 +438,119 @@ async def ws_predict(websocket: WebSocket) -> None:
                 else:
                     reply["error"] = str(exc)
             await websocket.send_json(reply)
+    except WebSocketDisconnect:
+        pass
+
+
+def _step_payload(experiment: Experiment, action: int, V: Any) -> dict[str, Any]:
+    """JSON payload for one step-wise training reply: next action + live V(s)."""
+    payload: dict[str, Any] = {
+        "action": int(action),
+        "value": np.asarray(V, dtype=np.float64).tolist(),
+    }
+    agent = experiment.agent
+    for key, attr in (
+        ("episode", "episode"),
+        ("episodes_trained", "episodes_trained"),
+        ("step", "train_step"),
+        ("alpha", "current_alpha"),
+        ("epsilon", "current_epsilon"),
+    ):
+        val = getattr(agent, attr, None)
+        if val is not None:
+            payload[key] = float(val) if key in ("alpha", "epsilon") else int(val)
+    return payload
+
+
+@app.websocket("/ws/train_step")
+async def ws_train_step(websocket: WebSocket) -> None:
+    """Step-wise (online) training channel for interaction-based agents (SARSA).
+
+    SARSA needs no MDP: the front end owns the environment rollouts. It starts
+    an episode, applies the action we return, samples the next state itself,
+    and reports (state, action, reward, next_state, done) back. Every reply
+    carries the next action plus the live state-value function V(s)=max_a Q(s,a).
+
+    One experiment is bound per connection by `start`; later messages may omit
+    `experiment_id`. Each message is echoed with its `id`.
+
+      {"id":1,"type":"start","experiment_id":"...","train_params":{...}}
+          -> {"id":1,"type":"started","action":a,"value":[...],
+              "episode":0,"step":0,"alpha":..,"epsilon":..}
+
+      {"id":2,"type":"step","state":s,"action":a,"reward":r,
+       "next_state":s2,"done":false}
+          -> {"id":2,"type":"step_result","action":a2,"value":[...], ...}
+
+      {"id":3,"type":"episode"}          # next episode, same training run
+          -> {"id":3,"type":"episode_started","action":a,"value":[...], ...}
+
+      {"id":4,"type":"finish"}      # run completed -> experiment is trained
+          -> {"id":4,"type":"finished","trained":true}
+
+    Only `finish` marks the run as trained; an aborted or abandoned run stays
+    partially trained and is reported as not trained.
+
+    Errors come back as {"id":..., "type":"error", "detail":"..."} and the
+    connection stays open so the caller can restart or continue.
+    """
+    await websocket.accept()
+    experiment: Experiment | None = None
+    try:
+        while True:
+            try:
+                msg = await websocket.receive_json()
+            except Exception as exc:
+                await websocket.send_json(
+                    {"type": "error", "detail": f"Invalid JSON message: {exc}"}
+                )
+                continue
+
+            msg_id = msg.get("id")
+            mtype = msg.get("type")
+            reply: dict[str, Any]
+            try:
+                if mtype == "start":
+                    experiment = _get_experiment(str(msg.get("experiment_id")))
+                    if not hasattr(experiment.agent, "train_by_step"):
+                        raise ValueError(
+                            f"Agent {experiment.agent_type!r} does not support "
+                            "step-wise training"
+                        )
+                    action, values = experiment.start_training(
+                        dict(msg.get("train_params") or {})
+                    )
+                    reply = {"type": "started", **_step_payload(experiment, action, values)}
+                elif experiment is None:
+                    raise ValueError("Send a 'start' message before stepping.")
+                elif mtype == "step":
+                    action, values = experiment.train_step(
+                        int(msg["state"]),
+                        int(msg["action"]),
+                        float(msg["reward"]),
+                        int(msg["next_state"]),
+                        bool(msg["done"]),
+                    )
+                    reply = {"type": "step_result", **_step_payload(experiment, action, values)}
+                elif mtype == "episode":
+                    action, values = experiment.next_episode()
+                    reply = {"type": "episode_started", **_step_payload(experiment, action, values)}
+                elif mtype == "finish":
+                    experiment.finish_training()
+                    reply = {"type": "finished", "trained": True}
+                else:
+                    raise ValueError(f"Unknown message type: {mtype!r}")
+            except Exception as exc:
+                if isinstance(exc, HTTPException):
+                    detail = str(exc.detail)
+                else:
+                    detail = str(exc)
+                await websocket.send_json(
+                    {"id": msg_id, "type": "error", "detail": detail}
+                )
+                continue
+
+            await websocket.send_json({"id": msg_id, **reply})
     except WebSocketDisconnect:
         pass
 

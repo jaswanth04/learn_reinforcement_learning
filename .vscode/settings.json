@@ -1,0 +1,8 @@
+{
+  "python.defaultInterpreterPath": "/home/jaswant/anaconda3/envs/rl/bin/python",
+  "python.analysis.extraPaths": [
+    "backend"
+  ],
+  "python.analysis.typeCheckingMode": "basic",
+  "python.terminal.activateEnvironment": true
+}

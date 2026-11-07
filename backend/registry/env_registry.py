@@ -1,78 +1,93 @@
-"""In-memory store of environment configurations, keyed by a stable env_id.
+"""In-memory store of environments, keyed by a stable env_id.
 
-Environments are deduplicated by a *structural* fingerprint (n_states, hole /
-goal positions, slip prob, rewards, start, ...) so equivalent environments -- e.g.
-re-initialized walks that differ only in seed -- share the same env_id. Models
-(experiments) reference an env_id, which lets the front-end only offer models
-whose environment matches the one currently configured, preventing e.g. loading
-a 10-state model into a 6-state corridor.
+Each registration is parsed into a typed environment model
+(registry/env_models.py) using the `env_type` sent with the payload, and the
+model is built into a live environment. Environments are deduplicated by the
+model's *structural* key (the fields that define the MDP; seed is ignored) so
+equivalent environments -- e.g. re-initialized with a different seed -- share
+the same env_id. Models (experiments) reference an env_id, which lets the
+front-end only offer models whose environment matches the one currently
+configured, preventing e.g. loading a 16-state model into a 9-state lake.
 """
 
-import json
+from dataclasses import dataclass
 from typing import Any
 from uuid import uuid4
 
 from exceptions.registry_execeptions import RegistryException
-
-# P (transition table) and seed do not change which model fits an environment:
-# P is derived from the other fields and seed only drives RNG noise.
-_IGNORED_KEYS = {"P", "seed"}
+from registry.env_models import EnvironmentModel, model_for
+from core.models import Environment
 
 
-def _as_jsonable(obj: Any) -> Any:
-    if isinstance(obj, (str, int, float, bool)) or obj is None:
-        return obj
-    if isinstance(obj, (list, tuple)):
-        return [_as_jsonable(o) for o in obj]
-    if isinstance(obj, dict):
-        return {str(k): _as_jsonable(v) for k, v in obj.items()}
-    return str(obj)
+@dataclass
+class StoredEnvironment:
+    """A registered environment: its typed model plus the built env object."""
 
-
-def env_fingerprint(env_config: dict[str, Any]) -> str:
-    """Deterministic *structural* fingerprint of an env_config dict."""
-    structural = {
-        k: v for k, v in env_config.items() if k not in _IGNORED_KEYS
-    }
-    return json.dumps(_as_jsonable(structural), sort_keys=True, default=str)
+    model: EnvironmentModel
+    env: Environment
 
 
 class EnvironmentRegistry:
-    """Runtime store of environment configs keyed by env_id."""
+    """Runtime store of environments keyed by env_id.
+
+    Deduplication is structural: registering the same MDP twice (e.g. with a
+    different seed) yields the same env_id.
+    """
 
     def __init__(self) -> None:
-        self._by_id: dict[str, dict[str, Any]] = {}
-        self._by_fingerprint: dict[str, str] = {}
+        self._by_id: dict[str, StoredEnvironment] = {}
+        self._by_key: dict[str, str] = {}
 
-    def get_or_create(self, env_config: dict[str, Any]) -> str:
-        """Return the env_id for `env_config`, reusing an equivalent one."""
-        fp = env_fingerprint(env_config)
-        existing = self._by_fingerprint.get(fp)
+    def get_or_create(
+        self,
+        env_config: dict[str, Any],
+        env_type: str | None = None,
+    ) -> str:
+        """Return the env_id for `env_config`, reusing an equivalent one.
+
+        `env_type` (as sent by the front-end) selects the model; it may also
+        be carried inside `env_config` itself.
+        """
+        env_type = env_type or env_config.get("env_type")
+        model = model_for(env_type).from_json(env_config)
+        key = model.structural_key()
+
+        existing = self._by_key.get(key)
         if existing is not None:
-            stored = self._by_id[existing]
-            # Fill in any richer detail (e.g. the P table) a later, structurally
-            # identical registration carries, so the stored env stays complete.
-            for key, value in env_config.items():
-                if value and not stored.get(key):
-                    stored[key] = value
             return existing
 
         env_id = str(uuid4())
-        self._by_id[env_id] = dict(env_config)
-        self._by_fingerprint[fp] = env_id
+        self._by_id[env_id] = StoredEnvironment(model=model, env=model.build())
+        self._by_key[key] = env_id
         return env_id
 
+    def get_model(self, env_id: str) -> EnvironmentModel:
+        """Return the typed model stored for `env_id`."""
+        return self._stored(env_id).model
+
+    def get_env(self, env_id: str) -> Environment:
+        """Return the live environment built for `env_id`."""
+        return self._stored(env_id).env
+
     def get(self, env_id: str) -> dict[str, Any]:
-        """Return a copy of the stored env config for `env_id`."""
+        """Return the full config dict for `env_id` (model fields plus the
+        derived P table, actions, skip_states, ...) as consumed by the front-end."""
+        stored = self._stored(env_id)
+        return stored.model.to_dict(stored.env)
+
+    def list(self) -> dict[str, dict[str, Any]]:
+        """Return {env_id: config} for every stored environment."""
+        return {
+            env_id: stored.model.to_dict(stored.env)
+            for env_id, stored in self._by_id.items()
+        }
+
+    def _stored(self, env_id: str) -> StoredEnvironment:
         if env_id not in self._by_id:
             raise RegistryException(
                 f"Environment {env_id} not found in the registry"
             )
-        return dict(self._by_id[env_id])
-
-    def list(self) -> dict[str, dict[str, Any]]:
-        """Return {env_id: config} for every stored environment."""
-        return {env_id: dict(cfg) for env_id, cfg in self._by_id.items()}
+        return self._by_id[env_id]
 
     def has(self, env_id: str) -> bool:
         return env_id in self._by_id

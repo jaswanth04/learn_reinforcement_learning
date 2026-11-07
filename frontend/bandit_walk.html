@@ -70,25 +70,101 @@
 
       <section class="card">
         <h2>2. Training</h2>
-        <div class="field-row">
-          <label class="field">
-            <span>γ (gamma)</span>
-            <input id="gamma" type="number" min="0" max="1" value="0.99" step="0.01" />
-          </label>
-          <label class="field">
-            <span>Tolerance</span>
-            <input id="tol" type="number" value="1e-6" step="1e-8" />
-          </label>
-        </div>
+
         <label class="field">
-          <span>Initial policy</span>
-          <select id="initPolicy">
-            <option value="random" selected>random</option>
-            <option value="always_left">always_left</option>
-            <option value="always_right">always_right</option>
+          <span>Training agent</span>
+          <select id="agentType">
+            <option value="PolicyIteration" selected>Policy Iteration (needs the MDP)</option>
+            <option value="Sarsa">SARSA (learns by stepping)</option>
           </select>
         </label>
+
+        <div id="piParams">
+          <div class="field-row">
+            <label class="field">
+              <span>γ (gamma)</span>
+              <input id="gamma" type="number" min="0" max="1" value="0.99" step="0.01" />
+            </label>
+            <label class="field">
+              <span>Tolerance</span>
+              <input id="tol" type="number" value="1e-6" step="1e-8" />
+            </label>
+          </div>
+          <label class="field">
+            <span>Initial policy</span>
+            <select id="initPolicy">
+              <option value="random" selected>random</option>
+              <option value="always_left">always_left</option>
+              <option value="always_right">always_right</option>
+            </select>
+          </label>
+        </div>
+
+        <div id="sarsaParams" class="hidden">
+          <div class="field-row">
+            <label class="field">
+              <span>γ (gamma)</span>
+              <input id="sarsaGamma" type="number" min="0" max="1" value="1" step="0.01" />
+            </label>
+            <label class="field">
+              <span>Episodes</span>
+              <input id="sarsaEpisodes" type="number" min="1" max="100000" value="1000" step="1" />
+            </label>
+          </div>
+          <div class="field-row">
+            <label class="field">
+              <span>Max steps / episode</span>
+              <input id="sarsaMaxSteps" type="number" min="1" max="5000" value="100" step="1" />
+            </label>
+            <label class="field">
+              <span>Initial policy</span>
+              <select id="sarsaInitPolicy">
+                <option value="random" selected>random</option>
+                <option value="always_left">always_left</option>
+                <option value="always_right">always_right</option>
+              </select>
+            </label>
+          </div>
+          <div class="field-row">
+            <label class="field">
+              <span>init α</span>
+              <input id="initAlpha" type="number" min="0" max="1" value="0.5" step="0.05" />
+            </label>
+            <label class="field">
+              <span>min α</span>
+              <input id="minAlpha" type="number" min="0" max="1" value="0.5" step="0.05" />
+            </label>
+          </div>
+          <div class="field-row">
+            <label class="field">
+              <span>α decay ratio</span>
+              <input id="alphaDecay" type="number" min="0" max="1" value="0.5" step="0.05" />
+            </label>
+            <label class="field">
+              <span>ε decay ratio</span>
+              <input id="epsilonDecay" type="number" min="0" max="1" value="0.9" step="0.05" />
+            </label>
+          </div>
+          <div class="field-row">
+            <label class="field">
+              <span>init ε</span>
+              <input id="initEpsilon" type="number" min="0" max="1" value="1" step="0.05" />
+            </label>
+            <label class="field">
+              <span>min ε</span>
+              <input id="minEpsilon" type="number" min="0" max="1" value="0.1" step="0.05" />
+            </label>
+          </div>
+        </div>
+
         <button id="trainBtn" class="primary" disabled>Train & plot V(s)</button>
+
+        <div id="sarsaLive" class="stats hidden">
+          <div class="stat"><span>Episode</span><b id="liveEpisode">—</b></div>
+          <div class="stat"><span>Step</span><b id="liveStep">—</b></div>
+          <div class="stat"><span>α</span><b id="liveAlpha">—</b></div>
+          <div class="stat"><span>ε</span><b id="liveEpsilon">—</b></div>
+        </div>
       </section>
 
       <section class="card log-card">
@@ -113,7 +189,7 @@
       </section>
 
       <section class="card">
-        <h2>Value function (trained)</h2>
+        <h2 id="chartTitle">Value function (trained)</h2>
         <div class="chart-wrap">
           <canvas id="valueChart" height="220"></canvas>
           <div id="chartFallback" class="hidden"></div>

@@ -1,7 +1,7 @@
 """Shared logic for the 1D walks (deterministic or slippery)."""
 
 from utils.env_core import EnvCore
-from utils.models import Action, ActionResult
+from core.models import Action, ActionResult
 
 
 class WalkEnv(EnvCore):

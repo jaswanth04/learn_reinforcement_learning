@@ -3,19 +3,27 @@
 
 import random
 
-from utils.models import Action, ActionResult
+from core.models import Action, ActionResult, ActionMap, ProbabilityTransition
 
 
 class EnvCore:
     """Base class for every environment's *interaction* logic.
 
-    Subclasses must provide before calling reset():
-      - self._actions:          dict[int, Action]
+    Subclasses must set these before calling reset():
+      - self._actions:          ActionMap
       - self._actions_by_name:  dict[str, int]
       - self._P:                ProbabilityTransition
       - self.start_state:       int
       - self._state:            int
+    and expose the read-only API of the Environment protocol
+    (P, actions, state, n_states, goal, holes, display_cols).
     """
+
+    _actions: ActionMap
+    _actions_by_name: dict[str, int]
+    _P: ProbabilityTransition
+    start_state: int
+    _state: int
 
     def __init__(self, seed: int | None = None):
         self._rng = random.Random(seed)          # env owns its RNG
@@ -62,6 +70,8 @@ class EnvCore:
         r = self._rng.random()
         cumulative = 0.0
         for o in outcomes:
+            if o.prob is None:                   # realized samples carry no prob
+                continue
             cumulative += o.prob
             if r < cumulative:
                 return o

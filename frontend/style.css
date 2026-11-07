@@ -337,3 +337,93 @@ select:disabled { opacity: 0.4; }
 
 .modelcard .mc-value.empty { color: var(--muted); font-style: italic; }
 .modelcard .mc-value.ok { color: var(--ok); }
+
+/* ---------------- back link ---------------- */
+.home-link {
+  display: inline-block;
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: var(--muted);
+  text-decoration: none;
+}
+.home-link:hover { color: var(--accent); }
+
+/* ---------------- home / environment chooser ---------------- */
+.home {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 28px;
+}
+
+.env-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 20px;
+}
+
+.env-card {
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 18px;
+  text-decoration: none;
+  color: var(--text);
+  transition: transform 0.08s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.env-card:hover {
+  transform: translateY(-3px);
+  border-color: var(--accent);
+  box-shadow: 0 8px 24px rgba(56, 189, 248, 0.15);
+}
+
+.env-preview {
+  margin: 0 0 14px;
+  padding: 12px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  color: var(--accent);
+  font-size: 13px;
+  line-height: 1.5;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  white-space: pre;
+  overflow-x: auto;
+}
+
+.env-body { flex: 1; }
+
+.env-body h2 { margin: 0 0 8px; font-size: 17px; color: var(--text); }
+
+.env-body p {
+  margin: 0 0 14px;
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.env-cta { font-size: 13px; font-weight: 600; color: var(--accent); }
+
+/* ---------------- grid (frozen lake) ---------------- */
+.grid {
+  display: grid;
+  gap: 8px;
+  padding: 8px 0 4px;
+  justify-content: start;
+}
+
+/* ---------------- dpad (4-way play) ---------------- */
+.dpad {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-template-rows: repeat(2, auto);
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+#upBtn    { grid-column: 2; grid-row: 1; }
+#leftBtn  { grid-column: 1; grid-row: 2; }
+#downBtn  { grid-column: 2; grid-row: 2; }
+#rightBtn { grid-column: 3; grid-row: 2; }

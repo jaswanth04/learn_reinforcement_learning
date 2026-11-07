@@ -4,7 +4,7 @@ With probability slip_prob the intended move is reversed.
 slip_prob = 0.0 reproduces the deterministic BanditWalk.
 """
 
-from utils.models import ActionResult
+from core.models import ActionResult
 from utils.walk_env import WalkEnv
 
 

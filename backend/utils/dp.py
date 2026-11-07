@@ -1,10 +1,11 @@
 """Dynamic programming: policy evaluation, improvement, and iteration."""
 
 import random
+from typing import Protocol
 
 import numpy as np
 
-from utils.models import Environment, Policy, QTable, ValueFunction
+from core.models import ActionResult, Environment, Policy, QTable, ValueFunction
 
 
 # ---------------------------------------------------------------- helpers
@@ -13,6 +14,18 @@ def default_policy(env: Environment, seed: int | None = None) -> Policy:
     rng = random.Random(seed if seed is not None else 0)
     codes = list(env.actions)
     return lambda s: int(rng.choice(codes))
+
+
+def transition_prob(o: ActionResult) -> float:
+    """Probability of a P-table branch.
+
+    ActionResult.prob is Optional because step() returns already-sampled
+    outcomes (prob=None); DP only ever reads the P table, where every branch
+    carries its probability.
+    """
+    if o.prob is None:
+        raise ValueError("DP needs probability-weighted P-table transitions, not sampled outcomes")
+    return o.prob
 
 
 # ---------------------------------------------------------------- evaluation
@@ -32,7 +45,7 @@ def policy_evaluation(env: Environment, pi: Policy, gamma: float = 0.99,
             if s in env.holes or s == env.goal:
                 continue                      # absorbing: V stays exactly 0
             v = sum(
-                o.prob * (o.reward + (0.0 if o.done else gamma * V[o.next_state]))
+                transition_prob(o) * (o.reward + (0.0 if o.done else gamma * V[o.next_state]))
                 for o in env.P[s][pi(s)]
             )
             delta = max(delta, abs(v - V[s]))
@@ -59,10 +72,10 @@ def solve_policy_value(env: Environment, pi: Policy, gamma: float = 0.99,
     P = np.zeros((k, k), dtype=np.float64)
 
     for i, s in enumerate(idx):
-        R[i] = sum(o.prob * o.reward for o in env.P[s][pi(s)])
+        R[i] = sum(transition_prob(o) * o.reward for o in env.P[s][pi(s)])
         for j, t in enumerate(idx):
             P[i, j] = sum(
-                o.prob for o in env.P[s][pi(s)]
+                transition_prob(o) for o in env.P[s][pi(s)]
                 if o.next_state == t and not o.done
             )
 
@@ -86,7 +99,7 @@ def policy_improvement(env: Environment, V: ValueFunction,
     for s in range(env.n_states):
         for a in env.P[s]:
             Q[s, a] = sum(
-                o.prob * (o.reward + (0.0 if o.done else gamma * V[o.next_state]))
+                transition_prob(o) * (o.reward + (0.0 if o.done else gamma * V[o.next_state]))
                 for o in env.P[s][a]
             )
 
@@ -95,10 +108,17 @@ def policy_improvement(env: Environment, V: ValueFunction,
 
 
 # ---------------------------------------------------------------- iteration
+class PolicyEvaluator(Protocol):
+    """Evaluate a fixed policy: iterative sweeps or the exact linear solve."""
+
+    def __call__(self, env: Environment, pi: Policy, *, gamma: float = ...,
+                 tol: float = ..., max_iter: int = ...) -> ValueFunction: ...
+
+
 def policy_iteration(env: Environment, gamma: float = 0.99, tol: float = 1e-9,
                      max_iters: int = 1000, eval_max_iters: int = 10_000,
                      init_policy: Policy | None = None,
-                     evaluator: callable = policy_evaluation) -> tuple[Policy, ValueFunction]:
+                     evaluator: PolicyEvaluator = policy_evaluation) -> tuple[Policy, ValueFunction]:
     """Full policy iteration: evaluate -> improve -> ... until stable.
 
     Stability of the greedy policy = Bellman optimality for a finite MDP,

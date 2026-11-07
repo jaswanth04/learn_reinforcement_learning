@@ -2,7 +2,7 @@ from dataclasses import dataclass
 
 from agents.base import Agent, AgentFactory
 from exceptions.registry_execeptions import RegistryException
-from utils.models import TrainingParameters, AgentParameters
+from core.models import TrainingParameters, AgentParameters
 from typing import Any
 
 @dataclass

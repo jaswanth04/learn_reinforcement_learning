@@ -11,7 +11,7 @@ learning agents (greedy / epsilon-greedy / optimistic / UCB).
 """
 
 from utils.env_core import EnvCore
-from utils.models import Action, ActionResult
+from core.models import Action, ActionResult
 
 
 def bernoulli(p: float):

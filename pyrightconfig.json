@@ -1,0 +1,13 @@
+{
+  "venvPath": "/home/jaswant/anaconda3/envs",
+  "venv": "rl",
+  "pythonVersion": "3.13",
+  "typeCheckingMode": "basic",
+  "reportMissingImports": true,
+  "executionEnvironments": [
+    {
+      "root": "backend",
+      "extraPaths": ["backend"]
+    }
+  ]
+}

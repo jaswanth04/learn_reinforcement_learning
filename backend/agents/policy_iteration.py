@@ -1,5 +1,5 @@
 import numpy as np
-from utils.models import ValueFunction, Policy
+from core.models import ValueFunction
 import random
 from typing import Any, Callable
 from exceptions.agent_exceptions import AgentInitializationException
@@ -72,8 +72,8 @@ class PolicyIterationAgent:
     def name(self):
         return self._name
 
-    def _evaluate_policy(self, pi: Policy,
-                         P: np.ndarray,
+    def _evaluate_policy(self, pi: list[int],
+                          P: np.ndarray,
                          skip_states: list[int],
                          gamma: float = 0.99,
                          tol: float = 1e-9,
@@ -94,7 +94,7 @@ class PolicyIterationAgent:
                     continue                      # absorbing: V stays exactly 0
                 v = sum(
                     o.prob * (o.reward + (0.0 if o.done else gamma * V[o.next_state]))
-                    for o in P[s][pi(s)]
+                    for o in P[s][pi[s]]
                 )
                 delta = max(delta, abs(v - V[s]))
                 V[s] = v
@@ -135,7 +135,11 @@ class PolicyIterationAgent:
         - `evaluator`      : plug in solve_policy_value for exact inner solves.
         """
         skip_states = train_params.skip_states if train_params.skip_states else []
-        pi = self._create_policy(train_params.init_policy)
+        # Snapshot the initial policy as a fixed list of actions. Holding the
+        # policy as data (not a live function over the mutable Q table) is what
+        # makes the stability check below meaningful.
+        init = self._create_policy(train_params.init_policy)
+        pi = [init(s) for s in range(self._n_states)]
 
         for _ in range(train_params.max_iters):
             V = self._evaluate_policy(
@@ -147,8 +151,8 @@ class PolicyIterationAgent:
                 max_iter=train_params.eval_max_iters,
             )
             self._improve_policy(V, train_params.P, train_params.gamma)
-            new_pi = self._select_action
-            if all(new_pi(s) == pi(s) for s in range(self._n_states)):
+            new_pi = [int(a) for a in np.argmax(self.Q, axis=1)]
+            if new_pi == pi:
                 return V
             pi = new_pi
 
