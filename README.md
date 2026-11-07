@@ -1,10 +1,12 @@
 # Grokking Reinforcement Learning — Implementations
 
-An interactive "Policy Iteration Lab" for gridworld-style MDPs. It ships two
+An interactive policy-iteration lab for gridworld-style MDPs. It ships two
 environments — a stochastic 1D **Bandit Slippery Walk** (a corridor with a goal,
 a hole, and a slip probability) and the classic slippery **Frozen Lake** grid —
-each with its own web page. A FastAPI backend trains a Policy Iteration agent
-with dynamic programming, and a vanilla-JS front end lets you configure the
+each with its own web page. Pick a training agent per experiment: a **Policy
+Iteration** agent trained with dynamic programming over the MDP, or a **SARSA**
+agent (on-policy TD control) that needs no model and learns live, one step at
+a time, over a WebSocket. A vanilla-JS front end lets you configure the
 environment, train the agent, play episodes manually or let the trained agent
 play, and run bulk predictions.
 
@@ -12,10 +14,12 @@ play, and run bulk predictions.
 
 ```
 backend/    FastAPI application (entry point: backend/main.py)
-            agents/      Policy iteration agent
+            agents/      Policy Iteration + SARSA (TD control) agents
+            core/        shared types (ValueFunction, Environment protocol, ...)
             registry/    agent / experiment / environment registries
             experiments/ Experiment + model-card logic
-            utils/       environments (walk, bandit walk, frozen lake), DP, metrics
+            utils/       environments (walk, bandit walk, frozen lake), DP,
+                         policy_control (SARSA, exploration), policy_estimation
 frontend/   Static front end — served by the backend
             index.html        environment chooser (home page)
             bandit_walk.html  Bandit Slippery Walk lab
@@ -97,12 +101,13 @@ Key API endpoints:
 
 | Endpoint | Description |
 | --- | --- |
-| `POST /register_experiment` | Register a new experiment (agent + environment) |
+| `POST /register_experiment` | Register a new experiment (`agent_type`: `PolicyIteration` or `Sarsa`) |
 | `GET /experiments` | List all registered experiments |
 | `GET /experiments/filter?agent_type=&env_type=&trained=&env_id=` | Filter experiments |
-| `GET /experiments/{experiment_id}` | Experiment details + learned value function |
+| `GET /experiments/{experiment_id}` | Experiment details + learned value function + episodes trained |
 | `GET /envs`, `GET /envs/{env_id}` | List / fetch environment configs |
-| `POST /train` | Train the experiment's agent, returns V(s) |
+| `POST /train` | Train a Policy Iteration agent, returns V(s) |
+| `WS /ws/train_step` | Step-wise SARSA training channel: `start` / `step` / `episode` / `finish` |
 | `POST /predict` | Greedy action for a single state |
 | `WS /ws/predict` | Persistent WebSocket channel for bulk predictions |
 
@@ -128,7 +133,8 @@ a new experiment in the backend registry and renders the board.
 - **Seed** — RNG seed for the environment
 - **Goal / Hole reward** — reward values for terminal states
 
-The corridor renders with `G` = goal, `H` = hole, `A` = agent position.
+The corridor renders with `·` = walkable, `G` = goal, `H` = hole, `A` = agent
+position.
 
 **Frozen Lake** (`/frozen_lake.html`):
 
@@ -146,7 +152,16 @@ The grid renders with `S` = start, `G` = goal, `H` = hole, `F` = frozen,
 
 ### 2. Training
 
-Set the training hyper-parameters, then click **Train & plot V(s)**:
+Pick the **Training agent** first — the hyper-parameter panel and the train
+button switch accordingly, and the experiment is registered with the selected
+agent (the backend builds the matching agent instance):
+
+- **Policy Iteration (needs the MDP)** — model-based dynamic programming;
+  solves for the optimal policy in one click.
+- **SARSA (learns by stepping)** — model-free on-policy TD control; learns
+  live from interaction over a WebSocket.
+
+**Policy Iteration** — click **Train & plot V(s)**:
 
 - **γ (gamma)** — discount factor
 - **Tolerance** — value-iteration convergence threshold
@@ -160,6 +175,39 @@ After training you get:
   hole bars are highlighted),
 - policy arrows drawn on the board (← / → for the walk; ← ↑ ↓ → for the grid),
 - a **model card** summarizing the experiment (params, env_id, trained flag).
+
+**SARSA** — click **Train SARSA (live)** (click it again to **Stop training**):
+
+- **γ (gamma)** — discount factor (default 1.0)
+- **Episodes** — how many episodes to train this run (front-end controlled)
+- **Max steps / episode** — an episode is force-reset when this budget runs out
+- **init α / min α / α decay ratio** — learning-rate schedule (indexed by episode)
+- **init ε / min ε / ε decay ratio** — ε-greedy exploration schedule (by episode)
+- **Initial policy** — behaviour policy used before any update
+
+The front end owns the rollouts and drives `WS /ws/train_step`: each observed
+`(state, action, reward, next_state, done)` is sent to the server, which
+applies the SARSA update and replies with the next action, the live value
+function V(s) = max_a Q(s,a), and the current episode / step / α / ε. While
+training you get:
+
+- a **live line chart** — one line per state, x-axis = episode, updated every
+  episode (goal and hole lines are highlighted),
+- V(s) figures on every board cell and a live **Episode / Step / α / ε** strip,
+- learned policy arrows + model card once the run finishes.
+
+Trained semantics and warm starts:
+
+- Only a **fully completed** run (or a deliberate Stop at an episode
+  boundary followed by completion) marks the model **trained** — an
+  interrupted run keeps its learning but is listed as *not trained*.
+- Training again on the same experiment is a **warm start**: the Q-table is
+  kept and training continues on top of it (α/ε schedules restart per run).
+  Click **Initialize experiment** for a clean slate.
+- The model card reports **Episodes trained** — the cumulative count across
+  all warm-start runs on that Q-table.
+- While any training runs, **Load model** and **Run bulk prediction** are
+  disabled until the run completes or is stopped.
 
 ### 3. Play
 
