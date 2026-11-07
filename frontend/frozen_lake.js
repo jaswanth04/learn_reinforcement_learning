@@ -136,6 +136,7 @@ const S = {
   policy: null,       // learned action per state (for the grid arrows)
   trained: false,
   bulkRunning: false,
+  training: false,       // policy iteration run in flight
   sarsaRunning: false,   // live SARSA training loop active
   sarsaAbort: false,     // set by the Stop button to break the training loop
   chartMode: null,       // "bar" (policy iteration) | "line" (SARSA live)
@@ -505,11 +506,11 @@ function setAgentUI() {
 }
 
 function updateBulkButton() {
-  els.bulkRunBtn.disabled = !S.env || S.bulkRunning;
+  els.bulkRunBtn.disabled = !S.env || S.bulkRunning || S.sarsaRunning || S.training;
 }
 
 function updateLoadButton() {
-  els.loadModelBtn.disabled = !els.sessionSelect.value;
+  els.loadModelBtn.disabled = !els.sessionSelect.value || S.sarsaRunning || S.training;
 }
 
 function setSessionStatus(data) {
@@ -779,6 +780,9 @@ async function trainAgent() {
   setError("");
   els.trainBtn.disabled = true;
   els.trainBtn.textContent = "Training...";
+  S.training = true;
+  updateBulkButton();
+  updateLoadButton();
   setStatus("Training agent (policy iteration)...");
   try {
     const data = await api("/train", { experiment_id: S.expId, train_params: readTrainParams() });
@@ -803,8 +807,11 @@ async function trainAgent() {
     setError(err.message);
     setStatus("Training failed.");
   } finally {
+    S.training = false;
     els.trainBtn.disabled = false;
     els.trainBtn.textContent = "Train & plot V(s)";
+    updateBulkButton();
+    updateLoadButton();
   }
 }
 
@@ -875,6 +882,8 @@ async function trainSarsa() {
   S.sarsaAbort = false;
   S.busy = true;
   setBusyGame(true);
+  updateBulkButton();
+  updateLoadButton();
   els.trainBtn.disabled = false;
   els.trainBtn.textContent = "Stop training";
   els.sarsaLive.classList.remove("hidden");
@@ -970,6 +979,8 @@ async function trainSarsa() {
     els.sarsaLive.classList.add("hidden");
     els.trainBtn.disabled = !S.env;
     els.trainBtn.textContent = isSarsa() ? "Train SARSA (live)" : "Train & plot V(s)";
+    updateBulkButton();
+    updateLoadButton();
     setBusyGame(false);
   }
 }

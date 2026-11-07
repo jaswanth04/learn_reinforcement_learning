@@ -198,7 +198,9 @@ button.move:hover:not(:disabled) { border-color: var(--accent); color: var(--acc
   flex-wrap: wrap;
 }
 .lg { display: inline-flex; align-items: center; gap: 5px; }
-.lg::before { content: ""; width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+.lg::before { content: ""; width: 10px; height: 10px; border-radius: 3px; display: inline-block; box-sizing: border-box; }
+.lg-start::before { background: var(--panel-2); border: 1px solid var(--accent); }
+.lg-frozen::before { background: var(--panel-2); border: 1px solid var(--line); }
 .lg-goal::before { background: var(--goal); }
 .lg-hole::before { background: var(--hole); }
 .lg-active::before { background: var(--accent); box-shadow: 0 0 0 2px rgba(56,189,248,.3); }
