@@ -1,9 +1,43 @@
-from typing import Protocol, TypeVar, Any
+from typing import Protocol, TypeVar, Any, Callable
 
 from core.models import TrainingParameters, ValueFunction, AgentParameters
 
+from numpy.typing import NDArray
+import numpy as np
+import random
+from exceptions.agent_exceptions import AgentInitializationException
+
 T = TypeVar("T", bound=TrainingParameters, contravariant=True)
 P = TypeVar("P", bound=AgentParameters, contravariant=True)
+
+def decay_schedule(init_value: float,
+                   min_value: float,
+                   decay_ratio: float,
+                   max_steps: int,
+                   log_start: int = -2,
+                   log_base: float = 10) -> NDArray[np.float64]:
+    decay_steps = max(min(int(max_steps * decay_ratio), max_steps), 2)
+    rem_steps = max_steps - decay_steps
+    values = np.logspace(log_start, 0, decay_steps, base=log_base, endpoint=True)[::-1]
+    values = (values - values.min()) / (values.max() - values.min())
+    values = (init_value - min_value) * values + min_value
+    return np.pad(values, (0, rem_steps), "edge")
+
+
+def get_init_policy(n_actions: int, policy_type: str | None = None) -> Callable[[Any], int]:
+
+    policy = policy_type if policy_type else "random"
+    policy_map: dict[str, Callable[[int], int]] = {
+        "random": lambda _: random.choice(range(n_actions)),
+        "always_left": lambda _: 0,
+        "always_right": lambda _: 1
+        }
+    if policy not in policy_map:
+        raise AgentInitializationException(
+            f"Unknown initial policy: {policy!r}. Known policies: {', '.join(policy_map)}"
+        )
+    return policy_map[policy]
+
 
 class Agent(Protocol[T]):
 

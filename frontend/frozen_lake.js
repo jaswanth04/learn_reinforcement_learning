@@ -64,22 +64,25 @@ const els = {
   initPolicy: $("initPolicy"),
   agentType: $("agentType"),
   piParams: $("piParams"),
-  sarsaParams: $("sarsaParams"),
-  sarsaGamma: $("sarsaGamma"),
-  sarsaEpisodes: $("sarsaEpisodes"),
-  sarsaMaxSteps: $("sarsaMaxSteps"),
-  sarsaInitPolicy: $("sarsaInitPolicy"),
+  tdParams: $("tdParams"),
+  tdGamma: $("tdGamma"),
+  tdEpisodes: $("tdEpisodes"),
+  tdMaxSteps: $("tdMaxSteps"),
+  tdInitPolicy: $("tdInitPolicy"),
   initAlpha: $("initAlpha"),
   minAlpha: $("minAlpha"),
   alphaDecay: $("alphaDecay"),
   epsilonDecay: $("epsilonDecay"),
   initEpsilon: $("initEpsilon"),
   minEpsilon: $("minEpsilon"),
-  sarsaLive: $("sarsaLive"),
+  tdLive: $("tdLive"),
   liveEpisode: $("liveEpisode"),
   liveStep: $("liveStep"),
   liveAlpha: $("liveAlpha"),
   liveEpsilon: $("liveEpsilon"),
+  liveSuccess: $("liveSuccess"),
+  successWrap: $("successWrap"),
+  successChart: $("successChart"),
   chartTitle: $("chartTitle"),
   trainBtn: $("trainBtn"),
   statusLine: $("statusLine"),
@@ -127,6 +130,7 @@ const S = {
   envId: null,
   env: null,          // env descriptor (n, holes, start, goal, P, ...)
   models: [],
+  agentTypes: [],   // agent type catalog fetched from the backend /agents
   state: null,
   steps: 0,
   episodeReward: 0,
@@ -137,9 +141,10 @@ const S = {
   trained: false,
   bulkRunning: false,
   training: false,       // policy iteration run in flight
-  sarsaRunning: false,   // live SARSA training loop active
-  sarsaAbort: false,     // set by the Stop button to break the training loop
-  chartMode: null,       // "bar" (policy iteration) | "line" (SARSA live)
+  tdRunning: false,      // live TD (SARSA / Q-Learning) training loop active
+  tdAbort: false,        // set by the Stop button to break the training loop
+  tdEpisodeResults: [],  // 1/0 per completed episode of the current TD run
+  chartMode: null,       // "bar" (policy iteration) | "line" (TD live)
   wsMsgId: 0,
   mode: "manual",
   aiTimer: null,
@@ -311,12 +316,12 @@ function readTrainParams() {
   };
 }
 
-function readSarsaTrainParams() {
+function readTdTrainParams() {
   return {
     initial_state: S.env.start,
-    gamma: parseFloat(els.sarsaGamma.value),
-    n_episodes: clampIntField(els.sarsaEpisodes, 1, 100000, 1000),
-    max_steps: clampIntField(els.sarsaMaxSteps, 1, 5000, 100),
+    gamma: parseFloat(els.tdGamma.value),
+    n_episodes: clampIntField(els.tdEpisodes, 1, 100000, 1000),
+    max_steps: clampIntField(els.tdMaxSteps, 1, 5000, 100),
     init_alpha: parseFloat(els.initAlpha.value),
     min_alpha: parseFloat(els.minAlpha.value),
     alpha_decay_ratio: clampField(els.alphaDecay, 0, 1, 0.5),
@@ -342,7 +347,7 @@ function plotValue(V) {
     els.chartFallback.classList.remove("hidden");
     return;
   }
-  if (S.chartMode !== "bar") destroyChart();   // leave SARSA live mode
+  if (S.chartMode !== "bar") destroyChart();   // leave TD live mode
   const holeSet = new Set(S.env.holes);
   const labels = V.map((_, s) => String(s));
   const color = (s) =>
@@ -379,7 +384,7 @@ function plotValue(V) {
   }
 }
 
-// Live SARSA chart: one line per state, x-axis = episode, updated every
+// Live TD chart (SARSA / Q-Learning): one line per state, x-axis = episode, updated every
 // episode boundary while the training loop runs.
 function stateLineColor(s) {
   if (s === S.env.goal) return "rgb(251,191,36)";
@@ -433,6 +438,7 @@ function pushLivePoint(episode, V) {
 
 function clearChart() {
   destroyChart();
+  destroySuccessChart();
   els.chartFallback.classList.add("hidden");
 }
 
@@ -465,7 +471,7 @@ function setError(text) {
 }
 
 function setBusyGame(busy) {
-  const locked = busy || S.sarsaRunning;
+  const locked = busy || S.tdRunning;
   const disabled = locked || !S.env || S.finished || S.mode !== "manual";
   els.upBtn.disabled = disabled;
   els.downBtn.disabled = disabled;
@@ -477,7 +483,7 @@ function setBusyGame(busy) {
 function refreshSessionUI() {
   const active = !!S.env;
   els.trainBtn.disabled = !active;
-  els.aiRunBtn.disabled = !active || S.mode !== "ai";
+  updateAIButton();
   els.refreshSessionsBtn.disabled = false;
   updateBulkButton();
   updateLoadButton();
@@ -486,31 +492,71 @@ function refreshSessionUI() {
 
 // ---------- Training agent selection --------------------------------
 
-function isSarsa() {
-  return els.agentType.value === "Sarsa";
+// The backend agent registry is the single source of truth: fetch /agents
+// and build the dropdown from it, so registering a new agent in the backend
+// needs no front-end change. `stepwise` marks interaction-based agents
+// (TD control) that train live instead of solving the MDP in one shot.
+async function loadAgentTypes() {
+  try {
+    const data = await apiGet("/agents");
+    S.agentTypes = data.agents || [];
+  } catch (err) {
+    setError(err.message);   // keep whatever options are already rendered
+    return;
+  }
+  if (!S.agentTypes.length) return;
+  const current = els.agentType.value;
+  els.agentType.innerHTML = "";
+  for (const a of S.agentTypes) {
+    const opt = document.createElement("option");
+    opt.value = a.agent_type;
+    opt.textContent = `${a.description} (${a.stepwise ? "learns by stepping" : "needs the MDP"})`;
+    els.agentType.appendChild(opt);
+  }
+  if (S.agentTypes.some((a) => a.agent_type === current)) els.agentType.value = current;
+  setAgentUI();
+}
+
+function agentInfo() {
+  return S.agentTypes.find((a) => a.agent_type === els.agentType.value) || null;
+}
+
+function isTd() {
+  const info = agentInfo();
+  if (info) return !!info.stepwise;
+  return els.agentType.value === "Sarsa" || els.agentType.value === "QLearning";
+}
+
+function tdAgentLabel() {
+  const info = agentInfo();
+  return (info && info.description) || els.agentType.value;
 }
 
 // Show the hyper-parameters of the selected agent, retitle the chart, and
 // relabel the train button ("Train ..." normally, "Stop training" live).
 function setAgentUI() {
-  const sarsa = isSarsa();
-  els.piParams.classList.toggle("hidden", sarsa);
-  els.sarsaParams.classList.toggle("hidden", !sarsa);
-  els.sarsaLive.classList.toggle("hidden", !(sarsa && S.sarsaRunning));
-  els.chartTitle.textContent = sarsa
-    ? "Value function — live V(s) per episode (SARSA)"
+  const td = isTd();
+  els.piParams.classList.toggle("hidden", td);
+  els.tdParams.classList.toggle("hidden", !td);
+  els.tdLive.classList.toggle("hidden", !(td && S.tdRunning));
+  els.chartTitle.textContent = td
+    ? `Value function — live V(s) per episode (${tdAgentLabel()})`
     : "Value function (trained)";
-  if (!S.sarsaRunning) {
-    els.trainBtn.textContent = sarsa ? "Train SARSA (live)" : "Train & plot V(s)";
+  if (!S.tdRunning) {
+    els.trainBtn.textContent = td ? `Train ${tdAgentLabel()} (live)` : "Train & plot V(s)";
   }
 }
 
 function updateBulkButton() {
-  els.bulkRunBtn.disabled = !S.env || S.bulkRunning || S.sarsaRunning || S.training;
+  els.bulkRunBtn.disabled = !S.env || S.bulkRunning || S.tdRunning || S.training;
 }
 
 function updateLoadButton() {
-  els.loadModelBtn.disabled = !els.sessionSelect.value || S.sarsaRunning || S.training;
+  els.loadModelBtn.disabled = !els.sessionSelect.value || S.tdRunning || S.training;
+}
+
+function updateAIButton() {
+  els.aiRunBtn.disabled = !S.env || S.mode !== "ai" || S.tdRunning || S.training;
 }
 
 function setSessionStatus(data) {
@@ -533,6 +579,15 @@ function fmtNum(v) {
   if (v === undefined || v === null) return "—";
   if (typeof v === "number") return Number.isInteger(v) ? String(v) : v.toFixed(3);
   return String(v);
+}
+
+// Human-readable duration (cumulative training seconds) for the model card.
+function fmtDuration(sec) {
+  if (!sec) return "—";
+  if (sec < 1) return `${Math.round(sec * 1000)} ms`;
+  if (sec < 60) return `${sec.toFixed(1)} s`;
+  const m = Math.floor(sec / 60);
+  return `${m}m ${(sec - m * 60).toFixed(0)}s`;
 }
 
 function fmtTrainingParams(tp) {
@@ -580,6 +635,7 @@ function renderModelCard(detail, envCfg) {
     ["Trained", detail.trained ? "yes" : "no"],
     ["Training", fmtTrainingParams(detail.training_params)],
     ["Episodes trained", fmtNum(detail.episodes_trained)],
+    ["Training time", fmtDuration(detail.training_time)],
     ["Value fn", detail.value && detail.value.length
       ? `min ${Math.min(...detail.value).toFixed(3)} · max ${Math.max(...detail.value).toFixed(3)}`
       : "—"],
@@ -660,7 +716,7 @@ async function refreshSessions(selectId) {
 
 async function selectSession(experimentId) {
   if (S.bulkRunning) { setError("Wait for bulk prediction to finish first."); return; }
-  if (S.sarsaRunning) { setError("Stop SARSA training first."); return; }
+  if (S.tdRunning) { setError(`Stop ${tdAgentLabel()} training first.`); return; }
   stopAI();
   setError("");
   if (!experimentId) return;
@@ -717,17 +773,17 @@ async function selectSession(experimentId) {
 
 async function initExperiment() {
   if (S.bulkRunning) { setError("Wait for bulk prediction to finish first."); return; }
-  if (S.sarsaRunning) { setError("Stop SARSA training first."); return; }
+  if (S.tdRunning) { setError(`Stop ${tdAgentLabel()} training first.`); return; }
   stopAI();
   setError("");
   els.initBtn.disabled = true;
   els.initBtn.textContent = "Initializing...";
   try {
     const cfg = readEnvConfig();
-    const sarsa = isSarsa();
+    const td = isTd();
     const data = await api("/register_experiment", {
       agent_type: els.agentType.value,
-      experiment_name: `frozenlake_${cfg.preset}_${cfg.n}x${cfg.n}${sarsa ? "_sarsa" : ""}`,
+      experiment_name: `frozenlake_${cfg.preset}_${cfg.n}x${cfg.n}${td ? "_" + els.agentType.value.toLowerCase() : ""}`,
       env_type: cfg.env_type,
       agent_params: {
         name: cfg.name.toLowerCase(),
@@ -735,7 +791,7 @@ async function initExperiment() {
         n_states: cfg.n_states,
         n_actions: cfg.n_actions,
         env_config: cfg,
-        ...(sarsa ? { initial_policy: els.sarsaInitPolicy.value } : {}),
+        ...(td ? { initial_policy: els.tdInitPolicy.value } : {}),
       },
       env_config: cfg,
     });
@@ -775,7 +831,7 @@ async function initExperiment() {
 }
 
 async function trainAgent() {
-  if (isSarsa()) return trainSarsa();
+  if (isTd()) return trainTd();
   if (!S.expId) { setError("Initialize the experiment first."); return; }
   setError("");
   els.trainBtn.disabled = true;
@@ -783,6 +839,7 @@ async function trainAgent() {
   S.training = true;
   updateBulkButton();
   updateLoadButton();
+  updateAIButton();
   setStatus("Training agent (policy iteration)...");
   try {
     const data = await api("/train", { experiment_id: S.expId, train_params: readTrainParams() });
@@ -812,10 +869,11 @@ async function trainAgent() {
     els.trainBtn.textContent = "Train & plot V(s)";
     updateBulkButton();
     updateLoadButton();
+    updateAIButton();
   }
 }
 
-// ---------- SARSA live training (WebSocket /ws/train_step) ----------
+// ---------- TD live training — SARSA / Q-Learning (WebSocket /ws/train_step) ----------
 //
 // The front end owns the rollouts: for every episode it starts an episode on
 // the server, steps the local grid with the action the server returns, and
@@ -853,6 +911,72 @@ function wsTrain(ws, payload) {
   });
 }
 
+// Rolling window (in episodes) for the live success-rate readout.
+const TD_SUCCESS_WINDOW = 100;
+
+let successChart = null;
+
+function destroySuccessChart() {
+  if (successChart) { successChart.destroy(); successChart = null; }
+  els.successWrap.classList.add("hidden");
+}
+
+// Rolling success-rate line: one point per episode boundary, y = % goals
+// reached over the last TD_SUCCESS_WINDOW completed episodes.
+function initSuccessChart() {
+  if (typeof Chart === "undefined") return;   // text tile still works
+  destroySuccessChart();
+  els.successWrap.classList.remove("hidden");
+  successChart = new Chart(els.successChart, {
+    type: "line",
+    data: {
+      labels: [],
+      datasets: [{
+        label: `Success rate — last ${TD_SUCCESS_WINDOW} episodes`,
+        data: [],
+        borderColor: "rgb(74,222,128)",
+        backgroundColor: "rgba(74,222,128,0.12)",
+        fill: true,
+        pointRadius: 0,
+        borderWidth: 2,
+        tension: 0.25,
+      }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: false,
+      plugins: {
+        legend: { labels: { color: "#e2e8f0", boxWidth: 10, font: { size: 10 } } },
+        tooltip: { callbacks: { label: (c) => `${Number(c.raw).toFixed(0)}%` } },
+      },
+      scales: {
+        x: { ticks: { color: "#94a3b8" }, grid: { color: "#1e293b" },
+             title: { display: true, text: "Episode", color: "#94a3b8" } },
+        y: { min: 0, max: 100,
+             ticks: { color: "#94a3b8", callback: (v) => v + "%" },
+             grid: { color: "#1e293b" },
+             title: { display: true, text: "Goal reached", color: "#94a3b8" } },
+      },
+    },
+  });
+}
+
+// Goal-reaching rate over the last TD_SUCCESS_WINDOW completed episodes of
+// the current training run; refreshed (and plotted) at every episode boundary.
+function updateLiveSuccess(episode) {
+  const results = S.tdEpisodeResults;
+  if (!results.length) { els.liveSuccess.textContent = "—"; return; }
+  const win = results.slice(-TD_SUCCESS_WINDOW);
+  const rate = (100 * win.reduce((a, b) => a + b, 0)) / win.length;
+  els.liveSuccess.textContent = `${Math.round(rate)}% (${win.length})`;
+  if (successChart) {
+    successChart.data.labels.push(String(episode));
+    successChart.data.datasets[0].data.push(Number(rate.toFixed(1)));
+    successChart.update("none");
+  }
+}
+
 function updateLiveStats(reply) {
   const total = reply.episodes_trained;
   els.liveEpisode.textContent = reply.episode === undefined
@@ -865,11 +989,11 @@ function updateLiveStats(reply) {
   els.liveEpsilon.textContent = reply.epsilon === undefined ? "—" : Number(reply.epsilon).toFixed(3);
 }
 
-async function trainSarsa() {
+async function trainTd() {
   if (!S.expId) { setError("Initialize the experiment first."); return; }
   if (S.bulkRunning) { setError("Wait for bulk prediction to finish first."); return; }
-  if (S.sarsaRunning) {           // second click while running = stop
-    S.sarsaAbort = true;
+  if (S.tdRunning) {           // second click while running = stop
+    S.tdAbort = true;
     els.trainBtn.disabled = true;
     els.trainBtn.textContent = "Stopping...";
     return;
@@ -877,17 +1001,20 @@ async function trainSarsa() {
 
   stopAI();
   setError("");
-  const tp = readSarsaTrainParams();
-  S.sarsaRunning = true;
-  S.sarsaAbort = false;
+  const tp = readTdTrainParams();
+  S.tdRunning = true;
+  S.tdAbort = false;
+  S.tdEpisodeResults = [];
   S.busy = true;
   setBusyGame(true);
   updateBulkButton();
   updateLoadButton();
+  updateAIButton();
   els.trainBtn.disabled = false;
   els.trainBtn.textContent = "Stop training";
-  els.sarsaLive.classList.remove("hidden");
+  els.tdLive.classList.remove("hidden");
   initLiveChart();
+  initSuccessChart();
 
   let ws = null;
   let lastEpisode = 0;
@@ -898,7 +1025,7 @@ async function trainSarsa() {
     let action = reply.action;
     S.value = reply.value;
 
-    for (let ep = 0; ep < tp.n_episodes && !S.sarsaAbort; ep++) {
+    for (let ep = 0; ep < tp.n_episodes && !S.tdAbort; ep++) {
       lastEpisode = ep;
       if (ep > 0) {                       // ask the backend to reset to the start state
         reply = await wsTrain(ws, { type: "episode" });
@@ -907,7 +1034,16 @@ async function trainSarsa() {
         pushLivePoint(ep, S.value);
       }
       let state = tp.initial_state;
-      for (let step = 0; step < tp.max_steps && !S.sarsaAbort; step++) {
+      let reachedGoal = false;               // episode outcome for the rolling success rate
+
+      // live view: replay this training episode on the board itself
+      S.state = state;
+      S.steps = 0;
+      S.episodeReward = 0;
+      S.finished = false;
+      updateStats();
+
+      for (let step = 0; step < tp.max_steps && !S.tdAbort; step++) {
         const outcome = sampleOutcome(S.env.P[state][action]);
         reply = await wsTrain(ws, {
           type: "step",
@@ -917,22 +1053,41 @@ async function trainSarsa() {
           next_state: outcome.next_state,
           done: !!outcome.done,
         });
-        action = reply.action;
+
+        // animate the play view exactly like a manual/AI step
+        showLastMove(action, state, outcome.next_state);
         state = outcome.next_state;
+        S.state = state;
+        S.steps = step + 1;
+        S.episodeReward += outcome.reward;
+        if (outcome.done) S.finished = true;   // goal/hole → next episode
         S.value = reply.value;
+        action = reply.action;                 // next action from the backend
+        renderGrid();
+        updateStats();
         updateLiveStats(reply);
-        if (outcome.done) break;          // reached goal/hole → next episode
+        if (outcome.done) { reachedGoal = outcome.next_state === S.env.goal; break; }
       }
+
+      // episode boundary: feed the rolling success-rate window
+      S.tdEpisodeResults.push(reachedGoal ? 1 : 0);
+      updateLiveSuccess(ep + 1);
 
       const doneEp = ep + 1;
       if (doneEp === tp.n_episodes || doneEp % 10 === 0) {
         renderGrid();                     // refresh the live V= labels on the cells
-        setStatus(`SARSA training — episode ${doneEp} / ${tp.n_episodes}.`, "ok");
+        setStatus(`${tdAgentLabel()} training — episode ${doneEp} / ${tp.n_episodes}.`, "ok");
         await new Promise((r) => setTimeout(r, 0));  // let the UI repaint
       }
     }
 
     pushLivePoint(lastEpisode + 1, S.value);   // final value snapshot
+
+    // park the marker back at the start; the final board shows the learned policy
+    S.state = S.env.start;
+    S.steps = 0;
+    S.episodeReward = 0;
+    S.finished = false;
 
     if (typeof Chart === "undefined" && S.value) {
       els.chartFallback.innerHTML = S.value
@@ -943,7 +1098,7 @@ async function trainSarsa() {
 
     // Only a fully completed run is marked trained on the backend; an
     // interrupted one stays "not trained" everywhere (sessions, model card).
-    const completed = !S.sarsaAbort;
+    const completed = !S.tdAbort;
     if (completed) {
       await wsTrain(ws, { type: "finish" });
     }
@@ -962,25 +1117,30 @@ async function trainSarsa() {
     setSessionStatus({ experiment_name: "this session", trained: completed });
     renderCurrentModelCard();
     const range = `V ranges ${Math.min(...S.value).toFixed(3)} .. ${Math.max(...S.value).toFixed(3)}`;
+    const win = S.tdEpisodeResults.slice(-TD_SUCCESS_WINDOW);
+    const success = win.length
+      ? ` Success rate (last ${win.length}): ${Math.round((100 * win.reduce((a, b) => a + b, 0)) / win.length)}%.`
+      : "";
     setStatus(
       completed
-        ? `SARSA trained for ${tp.n_episodes} episodes. ${range}.`
-        : `SARSA stopped at episode ${lastEpisode + 1} / ${tp.n_episodes} — partially trained, not marked as trained. ${range}.`,
+        ? `${tdAgentLabel()} trained for ${tp.n_episodes} episodes. ${range}.${success}`
+        : `${tdAgentLabel()} stopped at episode ${lastEpisode + 1} / ${tp.n_episodes} — partially trained, not marked as trained. ${range}.${success}`,
       "ok"
     );
   } catch (err) {
     setError(err.message);
-    setStatus("SARSA training failed.", "bad");
+    setStatus(`${tdAgentLabel()} training failed.`, "bad");
   } finally {
     if (ws) { try { ws.close(); } catch (_) { /* noop */ } }
-    S.sarsaRunning = false;
-    S.sarsaAbort = false;
+    S.tdRunning = false;
+    S.tdAbort = false;
     S.busy = false;
-    els.sarsaLive.classList.add("hidden");
+    els.tdLive.classList.add("hidden");
     els.trainBtn.disabled = !S.env;
-    els.trainBtn.textContent = isSarsa() ? "Train SARSA (live)" : "Train & plot V(s)";
+    els.trainBtn.textContent = isTd() ? `Train ${tdAgentLabel()} (live)` : "Train & plot V(s)";
     updateBulkButton();
     updateLoadButton();
+    updateAIButton();
     setBusyGame(false);
   }
 }
@@ -1101,7 +1261,7 @@ function resetEpisode() {
 
 function startAI() {
   stopAI();
-  if (S.sarsaRunning) { setError("Stop SARSA training first."); return; }
+  if (S.tdRunning || S.training) { setError("Stop training first."); return; }
   if (!S.expId) { setError("Initialize the experiment first."); return; }
   if (S.finished) resetEpisode();
   const ms = parseInt(els.aiSpeed.value, 10);
@@ -1168,7 +1328,7 @@ function wsPredict(ws, experimentId, state) {
 
 async function runBulkPrediction() {
   if (S.bulkRunning) return;
-  if (S.sarsaRunning) { setError("Stop SARSA training first."); return; }
+  if (S.tdRunning) { setError(`Stop ${tdAgentLabel()} training first.`); return; }
   if (!S.expId || !S.env) { setError("Select a session first."); return; }
   stopAI();
   setError("");
@@ -1235,7 +1395,7 @@ function setMode(mode) {
   const ai = mode === "ai";
   els.aiControls.classList.toggle("hidden", !ai);
   els.manualControls.classList.toggle("hidden", ai);
-  els.aiRunBtn.disabled = !S.env;
+  updateAIButton();
   els.aiRunBtn.textContent = "Start AI";
   if (!ai) setBusyGame(false);
 }
@@ -1246,7 +1406,7 @@ els.agentType.addEventListener("change", () => {
   setAgentUI();
   // The agent type is chosen at registration; re-register so the backend
   // instantiates the newly selected agent for the current environment.
-  if (S.env && !S.sarsaRunning && !S.bulkRunning) initExperiment();
+  if (S.env && !S.tdRunning && !S.bulkRunning) initExperiment();
 });
 els.upBtn.addEventListener("click", () => takeAction(3));
 els.downBtn.addEventListener("click", () => takeAction(1));
@@ -1300,3 +1460,4 @@ setBusyGame(true);
 renderGrid();
 updateStats();
 refreshSessions();
+loadAgentTypes();

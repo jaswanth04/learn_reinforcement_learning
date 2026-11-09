@@ -1,43 +1,17 @@
 import numpy as np
 from typing import Callable, Any, Self
-import random
+
 from dataclasses import MISSING, dataclass, fields, field
 from exceptions.agent_exceptions import AgentInitializationException, AgentTrainingException
 from core.models import ValueFunction
+from agents.base import decay_schedule, get_init_policy
 from utils.policy_control.exploration import epsilon_greedy, greedy_action
 from numpy.typing import NDArray
-
-def decay_schedule(init_value: float,
-                   min_value: float,
-                   decay_ratio: float,
-                   max_steps: int,
-                   log_start: int = -2,
-                   log_base: float = 10) -> NDArray[np.float64]:
-    decay_steps = max(min(int(max_steps * decay_ratio), max_steps), 2)
-    rem_steps = max_steps - decay_steps
-    values = np.logspace(log_start, 0, decay_steps, base=log_base, endpoint=True)[::-1]
-    values = (values - values.min()) / (values.max() - values.min())
-    values = (init_value - min_value) * values + min_value
-    return np.pad(values, (0, rem_steps), "edge")
-
-
-def get_init_policy(n_actions: int, policy_type: str | None = None) -> Callable[[Any], int]:
-
-    policy = policy_type if policy_type else "random"
-    policy_map: dict[str, Callable[[int], int]] = {
-        "random": lambda _: random.choice(range(n_actions)),
-        "always_left": lambda _: 0,
-        "always_right": lambda _: 1
-        }
-    if policy not in policy_map:
-        raise AgentInitializationException(
-            f"Unknown initial policy: {policy!r}. Known policies: {', '.join(policy_map)}"
-        )
-    return policy_map[policy]
+from abc import ABC, abstractmethod
 
 
 @dataclass
-class SarsaAgentParameters:
+class TemporalDifferenceAgentParameters:
     name: str
     env_type: str
     n_states: int
@@ -71,11 +45,11 @@ class SarsaAgentParameters:
         return cls(**filtered)
 
 @dataclass
-class SarsaAgentTrainingParameters:
+class TemporalDifferenceTrainingParameters:
     initial_state: int
     gamma: float = 1.0
     init_alpha: float = 0.5
-    min_alpha: float = 0.5
+    min_alpha: float = 0.01
     alpha_decay_ratio: float = 0.5
     init_epsilon: float = 1.0
     min_epsilon: float = 0.1
@@ -127,8 +101,11 @@ class SarsaAgentTrainingParameters:
         return cls(**filtered)
 
 
-class SarsaAgent:
-    """On-policy TD control (SARSA).
+class TemporalDifferenceAgent(ABC):
+    """Base class for model-free TD control (SARSA, Q-Learning).
+
+    Subclasses implement the TD target in train_by_step(): SARSA bootstraps
+    from the next on-policy action, Q-Learning from max_a Q(s', a).
 
     The agent does not need the MDP: the environment is stepped by the
     caller (the front end). A training run is driven through three calls:
@@ -140,7 +117,7 @@ class SarsaAgent:
     alpha / epsilon follow schedules indexed by the *episode* number.
     """
 
-    def __init__(self, params: SarsaAgentParameters) -> None:
+    def __init__(self, params: TemporalDifferenceAgentParameters) -> None:
         self._name = params.name
         self._env_type = params.env_type
         self.Q = np.zeros((params.n_states, params.n_actions), dtype=np.float64)
@@ -150,7 +127,7 @@ class SarsaAgent:
         self._policy = params.initial_policy or get_init_policy(params.n_actions)
         self._trained = False
 
-        self._train_params: SarsaAgentTrainingParameters | None = None
+        self._train_params: TemporalDifferenceTrainingParameters | None = None
         self._train_step: int = 0
         self._episode: int = -1        # no episode started yet (this run)
         self._episodes_trained: int = 0  # cumulative across ALL runs on this Q table
@@ -177,23 +154,38 @@ class SarsaAgent:
         return self._train_step
 
     @property
-    def current_alpha(self) -> float | None:
-        if self._train_params is None:
-            return None
+    def current_alpha(self) -> float:
+        self.check_train_parameters_initialized()
+        assert self._train_params is not None
         return self._train_params.get_alpha(self._episode)
 
     @property
-    def current_epsilon(self) -> float | None:
-        if self._train_params is None:
-            return None
+    def current_epsilon(self) -> float:
+        self.check_train_parameters_initialized()
+        assert self._train_params is not None
         return self._train_params.get_epsilon(self._episode)
+
+    @property
+    def gamma(self) -> float:
+        self.check_train_parameters_initialized()
+        assert self._train_params is not None
+        return self._train_params.gamma
+
+    def update_time_step(self):
+        self._train_step += 1
+
 
     @property
     def trained(self) -> bool:
         return self._trained
 
-    def set_training_params(self, train_params: SarsaAgentTrainingParameters):
+    def set_training_params(self, train_params: TemporalDifferenceTrainingParameters):
         self._train_params = train_params
+
+    def check_train_parameters_initialized(self):
+        if self._train_params is None:
+            raise AgentTrainingException("Train parameters are not yet initialized")
+
 
     def value_function(self) -> ValueFunction:
         """V(s) = max_a Q(s, a) — the greedy value of the current Q table."""
@@ -205,14 +197,14 @@ class SarsaAgent:
         else:
             return self._policy(state)
 
-    def train(self, train_params: SarsaAgentTrainingParameters) -> ValueFunction:
+    def train(self, train_params: TemporalDifferenceTrainingParameters) -> ValueFunction:
         raise AgentTrainingException(
-            "SarsaAgent learns from interaction, not from a full MDP. "
+            f"{type(self).__name__} learns from interaction, not from a full MDP. "
             "Drive it with start_training() / start_episode() / train_by_step() "
             "(WebSocket endpoint /ws/train_step)."
         )
 
-    def start_training(self, train_params: SarsaAgentTrainingParameters) -> tuple[int, ValueFunction]:
+    def start_training(self, train_params: TemporalDifferenceTrainingParameters) -> tuple[int, ValueFunction]:
         """Begin a fresh training run (resets step/episode counters and the
         trained flag) and take the first action of episode 0."""
         self._train_params = train_params
@@ -233,27 +225,9 @@ class SarsaAgent:
 
         return (action, self.value_function())
 
-    def train_by_step(self, current_state: int, action_taken: int, reward: float, next_state: int, done: bool) -> tuple[int, ValueFunction]:
+    @abstractmethod
+    def train_by_step(self, current_state: int, action_taken: int, reward: float, next_state: int, done: bool) -> tuple[int, ValueFunction]: ...
 
-        if self._train_params is None:
-            raise AgentTrainingException("Train parameters are not yet initialized")
-
-        alpha = self._train_params.get_alpha(self._episode)
-        epsilon = self._train_params.get_epsilon(self._episode)
-
-        if done:
-            td_target = reward
-            next_action = greedy_action(next_state, self.Q)
-        else:
-            next_action = epsilon_greedy(next_state, self.Q, epsilon)
-            td_target = reward + self._train_params.gamma * self.Q[next_state, next_action]
-
-        td_error = td_target - self.Q[current_state, action_taken]
-        self.Q[current_state, action_taken] += alpha * td_error
-
-        self._train_step += 1
-
-        return (next_action, self.value_function())
 
     def finish(self) -> None:
         """Mark the training run as complete: from now on predict() returns

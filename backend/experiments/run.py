@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from typing import Any
+import time
 
 from agents.base import Agent
 from core.models import TrainingParameters, ValueFunction
@@ -18,6 +19,7 @@ class ModelCard:
     value_function: ValueFunction | None = None
     env_id: str = ""
     episodes_trained: int | None = None
+    training_time: float | None = None
 
 @dataclass(eq=False)
 class Experiment:
@@ -34,6 +36,8 @@ class Experiment:
     training_params: dict[str, Any] | None = None
     trained: bool = False
     value_function: ValueFunction | None = None
+    training_time: float = 0.0            # cumulative seconds over ALL training runs
+    _run_started_at: float | None = None  # perf_counter anchor of the open step-wise run
 
     def _build_params(self, train_params: dict[str, Any]) -> Any:
         if self.training_parameter_class is not None:
@@ -44,7 +48,9 @@ class Experiment:
         """Build validated training params (if a class is registered) and run the agent."""
         params_obj = self._build_params(train_params)
 
+        t0 = time.perf_counter()
         V = self.agent.train(params_obj)
+        self.training_time += time.perf_counter() - t0
 
         self.trained = True
         self.value_function = V
@@ -70,6 +76,10 @@ class Experiment:
         self.training_params = dict(train_params)
         self.trained = False
 
+        # open a new timing window for this run (banking any unfinished one)
+        self._roll_up_run_time()
+        self._run_started_at = time.perf_counter()
+
         action, V = self._stepwise_agent().start_training(params_obj)
         self.value_function = V
         return action, V
@@ -94,9 +104,17 @@ class Experiment:
         return action, V
 
     def finish_training(self) -> None:
-        """Mark the step-wise training run as complete (fully trained)."""
+        """Mark the step-wise training run as complete (fully trained) and
+        bank its wall-clock duration into the cumulative training_time."""
         self._stepwise_agent().finish()
         self.trained = True
+        self._roll_up_run_time()
+
+    def _roll_up_run_time(self) -> None:
+        """Add the open step-wise run's elapsed time to training_time (if any)."""
+        if self._run_started_at is not None:
+            self.training_time += time.perf_counter() - self._run_started_at
+            self._run_started_at = None
 
     def predict(self, state: int) -> int:
         """Return the greedy action for the given state from the trained agent."""
@@ -114,5 +132,6 @@ class Experiment:
             value_function=self.value_function,
             env_id=self.env_id,
             episodes_trained=getattr(self.agent, "episodes_trained", None),
+            training_time=self.training_time,
         )
 

@@ -208,7 +208,9 @@ button.move:hover:not(:disabled) { border-color: var(--accent); color: var(--acc
 
 /* ---------------- chart ---------------- */
 .chart-wrap { position: relative; height: 240px; }
+.chart-wrap-sm { position: relative; height: 150px; }
 #valueChart { width: 100% !important; height: 100% !important; }
+#successChart { width: 100% !important; height: 100% !important; }
 #chartFallback { font-size: 13px; color: var(--muted); line-height: 1.6; font-variant-numeric: tabular-nums; }
 .hidden { display: none; }
 
@@ -340,15 +342,21 @@ select:disabled { opacity: 0.4; }
 .modelcard .mc-value.empty { color: var(--muted); font-style: italic; }
 .modelcard .mc-value.ok { color: var(--ok); }
 
-/* ---------------- back link ---------------- */
-.home-link {
+/* ---------------- back to main page button ---------------- */
+.home-btn {
   display: inline-block;
-  margin-bottom: 8px;
-  font-size: 12px;
-  color: var(--muted);
+  margin-bottom: 10px;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
   text-decoration: none;
+  transition: border-color 0.15s ease, color 0.15s ease;
 }
-.home-link:hover { color: var(--accent); }
+.home-btn:hover { border-color: var(--accent); color: var(--accent); }
 
 /* ---------------- home / environment chooser ---------------- */
 .home {

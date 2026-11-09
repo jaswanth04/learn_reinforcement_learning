@@ -4,8 +4,9 @@ An interactive policy-iteration lab for gridworld-style MDPs. It ships two
 environments — a stochastic 1D **Bandit Slippery Walk** (a corridor with a goal,
 a hole, and a slip probability) and the classic slippery **Frozen Lake** grid —
 each with its own web page. Pick a training agent per experiment: a **Policy
-Iteration** agent trained with dynamic programming over the MDP, or a **SARSA**
-agent (on-policy TD control) that needs no model and learns live, one step at
+Iteration** agent trained with dynamic programming over the MDP, or a model-free
+TD-control agent — **SARSA** (on-policy) or **Q-Learning** (off-policy) — that
+needs no model and learns live, one step at
 a time, over a WebSocket. A vanilla-JS front end lets you configure the
 environment, train the agent, play episodes manually or let the trained agent
 play, and run bulk predictions.
@@ -14,7 +15,7 @@ play, and run bulk predictions.
 
 ```
 backend/    FastAPI application (entry point: backend/main.py)
-            agents/      Policy Iteration + SARSA (TD control) agents
+            agents/      Policy Iteration + TD control agents (SARSA, Q-Learning)
             core/        shared types (ValueFunction, Environment protocol, ...)
             registry/    agent / experiment / environment registries
             experiments/ Experiment + model-card logic
@@ -101,13 +102,15 @@ Key API endpoints:
 
 | Endpoint | Description |
 | --- | --- |
-| `POST /register_experiment` | Register a new experiment (`agent_type`: `PolicyIteration` or `Sarsa`) |
+| `GET /health` | Server liveness |
+| `GET /agents` | List registered agent types (`agent_type`, `description`, `stepwise`) — the front-end dropdown is built from this |
+| `POST /register_experiment` | Register a new experiment (`agent_type`: `PolicyIteration`, `Sarsa`, `QLearning`, or `DoubleQLearning`) |
 | `GET /experiments` | List all registered experiments |
 | `GET /experiments/filter?agent_type=&env_type=&trained=&env_id=` | Filter experiments |
 | `GET /experiments/{experiment_id}` | Experiment details + learned value function + episodes trained |
 | `GET /envs`, `GET /envs/{env_id}` | List / fetch environment configs |
 | `POST /train` | Train a Policy Iteration agent, returns V(s) |
-| `WS /ws/train_step` | Step-wise SARSA training channel: `start` / `step` / `episode` / `finish` |
+| `WS /ws/train_step` | Step-wise TD (SARSA / Q-Learning) training channel: `start` / `step` / `episode` / `finish` |
 | `POST /predict` | Greedy action for a single state |
 | `WS /ws/predict` | Persistent WebSocket channel for bulk predictions |
 
@@ -160,6 +163,11 @@ agent (the backend builds the matching agent instance):
   solves for the optimal policy in one click.
 - **SARSA (learns by stepping)** — model-free on-policy TD control; learns
   live from interaction over a WebSocket.
+- **Q-Learning (learns by stepping)** — model-free off-policy TD control;
+  bootstraps from max_a Q(s', a), so it learns the optimal policy directly.
+- **Double Q-Learning (learns by stepping)** — off-policy TD control with two
+  tables (Q1/Q2); selects the next action with one table and evaluates it with
+  the other to reduce the maximisation bias. Q = (Q1 + Q2) / 2.
 
 **Policy Iteration** — click **Train & plot V(s)**:
 
@@ -176,7 +184,8 @@ After training you get:
 - policy arrows drawn on the board (← / → for the walk; ← ↑ ↓ → for the grid),
 - a **model card** summarizing the experiment (params, env_id, trained flag).
 
-**SARSA** — click **Train SARSA (live)** (click it again to **Stop training**):
+**SARSA / Q-Learning** — click **Train SARSA (live)** / **Train Q-Learning
+(live)** (click it again to **Stop training**):
 
 - **γ (gamma)** — discount factor (default 1.0)
 - **Episodes** — how many episodes to train this run (front-end controlled)
@@ -187,7 +196,7 @@ After training you get:
 
 The front end owns the rollouts and drives `WS /ws/train_step`: each observed
 `(state, action, reward, next_state, done)` is sent to the server, which
-applies the SARSA update and replies with the next action, the live value
+applies the SARSA / Q-Learning update and replies with the next action, the live value
 function V(s) = max_a Q(s,a), and the current episode / step / α / ε. While
 training you get:
 

@@ -18,10 +18,11 @@ from agents.policy_iteration import (
     PolicyIterationTrainingParameters,
 )
 from agents.td import (
-    SarsaAgent,
-    SarsaAgentParameters,
-    SarsaAgentTrainingParameters,
+    TemporalDifferenceAgentParameters,
+    TemporalDifferenceTrainingParameters,
 )
+from agents.sarsa import SarsaAgent
+from agents.q_learning import QLearningAgent, DoubleQLearningAgent
 
 from typing import Any
 from core.models import ActionResult
@@ -97,6 +98,7 @@ class ModelCardResponse(BaseModel):
     value: list[float] | None = None
     env_id: str
     episodes_trained: int | None = None
+    training_time: float | None = None
 
 
 class ExperimentFilterResponse(BaseModel):
@@ -116,6 +118,7 @@ class ExperimentDetailResponse(BaseModel):
     training_params: dict[str, Any] | None = None
     env_id: str
     episodes_trained: int | None = None
+    training_time: float | None = None
 
 
 class EnvironmentSummary(BaseModel):
@@ -137,6 +140,17 @@ class PredictResponse(BaseModel):
     action: int
 
 
+class AgentTypeSummary(BaseModel):
+    agent_type: str
+    description: str
+    stepwise: bool
+
+
+class AgentTypeListResponse(BaseModel):
+    agents: list[AgentTypeSummary]
+    success: bool
+
+
 # ------------------------- Registries -------------------------
 
 # Type catalog: how to build/train each agent kind (keyed by agent_type).
@@ -146,12 +160,28 @@ agent_registry.register(
     PolicyIterationAgent,
     PolicyIterationTrainingParameters,
     PolicyIterationAgentParameters,
+    description="Policy Iteration",
 )
 agent_registry.register(
     "Sarsa",
     SarsaAgent,
-    SarsaAgentTrainingParameters,
-    SarsaAgentParameters,
+    TemporalDifferenceTrainingParameters,
+    TemporalDifferenceAgentParameters,
+    description="SARSA",
+)
+agent_registry.register(
+    "QLearning",
+    QLearningAgent,
+    TemporalDifferenceTrainingParameters,
+    TemporalDifferenceAgentParameters,
+    description="Q-Learning",
+)
+agent_registry.register(
+    "DoubleQLearning",
+    DoubleQLearningAgent,
+    TemporalDifferenceTrainingParameters,
+    TemporalDifferenceAgentParameters,
+    description="Double Q-Learning",
 )
 
 # Runtime store: initialized agent objects (keyed by agent_id).
@@ -178,6 +208,7 @@ def _model_card_response(card: ModelCard) -> ModelCardResponse:
         value=card.value_function.tolist() if card.value_function is not None else None,
         env_id=card.env_id,
         episodes_trained=card.episodes_trained,
+        training_time=card.training_time,
     )
 
 
@@ -258,6 +289,28 @@ def _create_experiment(req: ExperimentRequest) -> Experiment:
 def health() -> HealthResponse:
     """Return server liveness only."""
     return HealthResponse(status="alive")
+
+
+@app.get("/agents", response_model=AgentTypeListResponse)
+def list_agent_types() -> AgentTypeListResponse:
+    """List every registered training agent type.
+
+    The front end builds its "Training agent" dropdown from this, so adding a
+    new agent to the registry here is all it takes — no front-end change.
+    `stepwise` tells the UI the agent learns by stepping (no MDP needed)
+    instead of one-shot dynamic programming.
+    """
+    return AgentTypeListResponse(
+        agents=[
+            AgentTypeSummary(
+                agent_type=agent_type,
+                description=entry.description or agent_type,
+                stepwise=entry.stepwise,
+            )
+            for agent_type, entry in agent_registry.list().items()
+        ],
+        success=True,
+    )
 
 
 @app.post("/register_experiment", response_model=RegisterExperimentResponse)
@@ -343,6 +396,7 @@ def get_experiment(experiment_id: str) -> ExperimentDetailResponse:
         training_params=experiment.training_params,
         env_id=env_id,
         episodes_trained=getattr(experiment.agent, "episodes_trained", None),
+        training_time=experiment.training_time,
     )
 
 
@@ -464,9 +518,10 @@ def _step_payload(experiment: Experiment, action: int, V: Any) -> dict[str, Any]
 
 @app.websocket("/ws/train_step")
 async def ws_train_step(websocket: WebSocket) -> None:
-    """Step-wise (online) training channel for interaction-based agents (SARSA).
+    """Step-wise (online) training channel for interaction-based agents
+    (SARSA / Q-Learning).
 
-    SARSA needs no MDP: the front end owns the environment rollouts. It starts
+    These agents need no MDP: the front end owns the environment rollouts. It starts
     an episode, applies the action we return, samples the next state itself,
     and reports (state, action, reward, next_state, done) back. Every reply
     carries the next action plus the live state-value function V(s)=max_a Q(s,a).

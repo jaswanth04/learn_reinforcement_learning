@@ -9,7 +9,7 @@
 </head>
 <body>
   <header>
-    <a class="home-link" href="/">← All environments</a>
+    <a class="home-btn" href="/">← Main page</a>
     <h1>Frozen Lake — Policy Iteration Lab</h1>
     <p class="subtitle">
       The classic slippery gridworld. Pick a board, train a Policy Iteration agent over
@@ -70,8 +70,8 @@
         <label class="field">
           <span>Training agent</span>
           <select id="agentType">
-            <option value="PolicyIteration" selected>Policy Iteration (needs the MDP)</option>
-            <option value="Sarsa">SARSA (learns by stepping)</option>
+            <!-- populated from the backend agent registry via GET /agents -->
+            <option value="" disabled selected>Loading agent types…</option>
           </select>
         </label>
 
@@ -96,25 +96,25 @@
           </label>
         </div>
 
-        <div id="sarsaParams" class="hidden">
+        <div id="tdParams" class="hidden">
           <div class="field-row">
             <label class="field">
               <span>γ (gamma)</span>
-              <input id="sarsaGamma" type="number" min="0" max="1" value="1" step="0.01" />
+              <input id="tdGamma" type="number" min="0" max="1" value="1" step="0.01" />
             </label>
             <label class="field">
               <span>Episodes</span>
-              <input id="sarsaEpisodes" type="number" min="1" max="100000" value="1000" step="1" />
+              <input id="tdEpisodes" type="number" min="1" max="100000" value="1000" step="1" />
             </label>
           </div>
           <div class="field-row">
             <label class="field">
               <span>Max steps / episode</span>
-              <input id="sarsaMaxSteps" type="number" min="1" max="5000" value="100" step="1" />
+              <input id="tdMaxSteps" type="number" min="1" max="5000" value="100" step="1" />
             </label>
             <label class="field">
               <span>Initial policy</span>
-              <select id="sarsaInitPolicy">
+              <select id="tdInitPolicy">
                 <option value="random" selected>random</option>
                 <option value="always_left">always LEFT (0)</option>
                 <option value="always_right">always DOWN (1)</option>
@@ -127,8 +127,8 @@
               <input id="initAlpha" type="number" min="0" max="1" value="0.5" step="0.05" />
             </label>
             <label class="field">
-              <span>min α</span>
-              <input id="minAlpha" type="number" min="0" max="1" value="0.5" step="0.05" />
+              <span>init ε</span>
+              <input id="initEpsilon" type="number" min="0" max="1" value="1" step="0.05" />
             </label>
           </div>
           <div class="field-row">
@@ -143,8 +143,8 @@
           </div>
           <div class="field-row">
             <label class="field">
-              <span>init ε</span>
-              <input id="initEpsilon" type="number" min="0" max="1" value="1" step="0.05" />
+              <span>min α</span>
+              <input id="minAlpha" type="number" min="0" max="1" value="0.01" step="0.05" />
             </label>
             <label class="field">
               <span>min ε</span>
@@ -155,11 +155,12 @@
 
         <button id="trainBtn" class="primary" disabled>Train &amp; plot V(s)</button>
 
-        <div id="sarsaLive" class="stats hidden">
+        <div id="tdLive" class="stats hidden">
           <div class="stat"><span>Episode</span><b id="liveEpisode">—</b></div>
           <div class="stat"><span>Step</span><b id="liveStep">—</b></div>
           <div class="stat"><span>α</span><b id="liveAlpha">—</b></div>
           <div class="stat"><span>ε</span><b id="liveEpsilon">—</b></div>
+          <div class="stat"><span>Success (last 100)</span><b id="liveSuccess">—</b></div>
         </div>
       </section>
 
@@ -191,6 +192,13 @@
         <div class="chart-wrap">
           <canvas id="valueChart" height="220"></canvas>
           <div id="chartFallback" class="hidden"></div>
+        </div>
+      </section>
+
+      <section class="card hidden" id="successWrap">
+        <h2>Success rate (live)</h2>
+        <div class="chart-wrap chart-wrap-sm">
+          <canvas id="successChart"></canvas>
         </div>
       </section>
 

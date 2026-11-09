@@ -10,6 +10,13 @@ class AgentEntry:
     agent_class: AgentFactory
     training_parameter_class: type[TrainingParameters] | None = None
     agent_parameter_class: type[AgentParameters] | None = None
+    description: str = ""
+
+    @property
+    def stepwise(self) -> bool:
+        """Interaction-based agents (TD control) implement train_by_step();
+        model-based agents (dynamic programming) do not."""
+        return hasattr(self.agent_class, "train_by_step")
 
 class AgentRegistry:
     def __init__(self):
@@ -21,12 +28,14 @@ class AgentRegistry:
         agent: type[Agent[Any]],
         training_parameters: type[TrainingParameters] | None = None,
         agent_parameters: type[AgentParameters] | None = None,
+        description: str = "",
     ) -> None:
         print(f"Registering {agent_type}")
         self._registry[agent_type] = AgentEntry(
             agent_class=agent,
             training_parameter_class=training_parameters,
-            agent_parameter_class=agent_parameters
+            agent_parameter_class=agent_parameters,
+            description=description
         )
 
     def get_agent(self, agent_type: str) -> AgentEntry:
@@ -36,3 +45,7 @@ class AgentRegistry:
 
     def get_agent_types(self) -> list[str]:
         return list(self._registry.keys())
+
+    def list(self) -> dict[str, AgentEntry]:
+        """All registered agent types with their entries (registration order)."""
+        return dict(self._registry)
