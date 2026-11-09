@@ -39,6 +39,7 @@ type QTable = NDArray[np.float64]               # Q[s, a]
 class EnvironmentType(StrEnum):
     SlipperyBanditWalk = "SlipperyBanditWalk"
     FrozenLake = "FrozenLake"
+    RussellNorvigGridWorld = "RussellNorvigGridWorld"
 
 @dataclass
 class ModelCard:

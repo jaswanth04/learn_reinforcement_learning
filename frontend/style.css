@@ -175,6 +175,17 @@ button.move:hover:not(:disabled) { border-color: var(--accent); color: var(--acc
 .cell.goal .mid { color: var(--goal); }
 .cell.hole .mid { color: var(--hole); }
 
+/* Russell & Norvig grid world: -1 pit and impassable wall */
+.cell.pit { border-color: var(--bad); }
+.cell.pit .mid { color: var(--bad); }
+
+.cell.wall {
+  background: repeating-linear-gradient(45deg, #1a2332, #1a2332 6px, #263449 6px, #263449 12px);
+  border-color: #475569;
+}
+.cell.wall .mid { color: #64748b; }
+.cell.wall .sid { color: #475569; }
+
 .cell.active {
   border-color: var(--accent);
   box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.35), 0 4px 14px rgba(56, 189, 248, 0.18);
@@ -203,6 +214,11 @@ button.move:hover:not(:disabled) { border-color: var(--accent); color: var(--acc
 .lg-frozen::before { background: var(--panel-2); border: 1px solid var(--line); }
 .lg-goal::before { background: var(--goal); }
 .lg-hole::before { background: var(--hole); }
+.lg-pit::before { background: var(--bad); }
+.lg-wall::before {
+  background: repeating-linear-gradient(45deg, #1a2332, #1a2332 2px, #263449 2px, #263449 4px);
+  border: 1px solid #475569;
+}
 .lg-active::before { background: var(--accent); box-shadow: 0 0 0 2px rgba(56,189,248,.3); }
 .lg-arrow::before { background: transparent; }
 

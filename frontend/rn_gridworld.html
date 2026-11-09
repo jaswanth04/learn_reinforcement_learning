@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Russell &amp; Norvig Grid World — Policy Iteration Lab</title>
+  <link rel="stylesheet" href="style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+</head>
+<body>
+  <header>
+    <a class="home-btn" href="/">← Main page</a>
+    <h1>Russell &amp; Norvig Grid World — Policy Iteration Lab</h1>
+    <p class="subtitle">
+      The classic 3×4 AIMA gridworld: stochastic moves (80% intended, 10% each side),
+      a wall at (2,2), a +1 goal and a −1 pit, and a −0.04 step cost. Train an agent
+      over the 12-state MDP, then play it (or the agent) from S to the +1 goal.
+    </p>
+  </header>
+
+  <main class="layout">
+    <!-- ============ Left column: setup + training ============ -->
+    <div class="col col-config">
+      <section class="card">
+        <h2>1. Environment setup</h2>
+
+        <label class="field">
+          <span>Board layout</span>
+          <select id="preset">
+            <option value="loaded" disabled>Loaded model</option>
+            <option value="standard" selected>Standard 3×4 (AIMA Figure 17.1)</option>
+          </select>
+        </label>
+
+        <label class="field">
+          <span>Intended-move probability: <b id="intendedProbLabel">0.800</b></span>
+          <input id="intendedProb" type="range" min="0" max="1" value="0.8" step="0.001" />
+        </label>
+        <p class="key-hint">
+          1.000 = deterministic. 0.800 = classic AIMA (intended 80%, each
+          perpendicular side 10%). Lower = more erratic moves.
+        </p>
+
+        <div class="field-row">
+          <label class="field">
+            <span>Goal reward (+)</span>
+            <input id="goalReward" type="number" value="1" step="0.1" />
+          </label>
+          <label class="field">
+            <span>Pit reward (−)</span>
+            <input id="pitReward" type="number" value="-1" step="0.1" />
+          </label>
+        </div>
+
+        <label class="field">
+          <span>Step cost</span>
+          <input id="stepReward" type="number" value="-0.04" step="0.01" />
+        </label>
+
+        <label class="field">
+          <span>Seed</span>
+          <input id="seed" type="number" value="0" step="1" />
+        </label>
+
+        <button id="initBtn" class="primary">Initialize experiment</button>
+      </section>
+
+      <section class="card">
+        <h2>2. Training</h2>
+
+        <label class="field">
+          <span>Training agent</span>
+          <select id="agentType">
+            <!-- populated from the backend agent registry via GET /agents -->
+            <option value="" disabled selected>Loading agent types…</option>
+          </select>
+        </label>
+
+        <div id="piParams">
+          <div class="field-row">
+            <label class="field">
+              <span>γ (gamma)</span>
+              <input id="gamma" type="number" min="0" max="1" value="0.95" step="0.01" />
+            </label>
+            <label class="field">
+              <span>Tolerance</span>
+              <input id="tol" type="number" value="1e-6" step="1e-8" />
+            </label>
+          </div>
+          <label class="field">
+            <span>Initial policy</span>
+            <select id="initPolicy">
+              <option value="random" selected>random</option>
+              <option value="always_left">always LEFT (0)</option>
+              <option value="always_right">always DOWN (1)</option>
+            </select>
+          </label>
+        </div>
+
+        <div id="tdParams" class="hidden">
+          <div class="field-row">
+            <label class="field">
+              <span>γ (gamma)</span>
+              <input id="tdGamma" type="number" min="0" max="1" value="1" step="0.01" />
+            </label>
+            <label class="field">
+              <span>Episodes</span>
+              <input id="tdEpisodes" type="number" min="1" max="100000" value="1000" step="1" />
+            </label>
+          </div>
+          <div class="field-row">
+            <label class="field">
+              <span>Max steps / episode</span>
+              <input id="tdMaxSteps" type="number" min="1" max="5000" value="100" step="1" />
+            </label>
+            <label class="field">
+              <span>Initial policy</span>
+              <select id="tdInitPolicy">
+                <option value="random" selected>random</option>
+                <option value="always_left">always LEFT (0)</option>
+                <option value="always_right">always DOWN (1)</option>
+              </select>
+            </label>
+          </div>
+          <div class="field-row">
+            <label class="field">
+              <span>init α</span>
+              <input id="initAlpha" type="number" min="0" max="1" value="0.5" step="0.05" />
+            </label>
+            <label class="field">
+              <span>init ε</span>
+              <input id="initEpsilon" type="number" min="0" max="1" value="1" step="0.05" />
+            </label>
+          </div>
+          <div class="field-row">
+            <label class="field">
+              <span>α decay ratio</span>
+              <input id="alphaDecay" type="number" min="0" max="1" value="0.5" step="0.05" />
+            </label>
+            <label class="field">
+              <span>ε decay ratio</span>
+              <input id="epsilonDecay" type="number" min="0" max="1" value="0.9" step="0.05" />
+            </label>
+          </div>
+          <div class="field-row">
+            <label class="field">
+              <span>min α</span>
+              <input id="minAlpha" type="number" min="0" max="1" value="0.01" step="0.05" />
+            </label>
+            <label class="field">
+              <span>min ε</span>
+              <input id="minEpsilon" type="number" min="0" max="1" value="0.1" step="0.05" />
+            </label>
+          </div>
+          <div class="field-row">
+            <label class="field">
+              <span>λ (lambda)</span>
+              <input id="tdLambda" type="number" min="0" max="1" value="0.5" step="0.05" />
+            </label>
+            <label class="field">
+              <span>Eligibility trace</span>
+              <select id="tdTraceType">
+                <option value="replacing" selected>replacing</option>
+                <option value="accumulating">accumulating</option>
+              </select>
+            </label>
+          </div>
+        </div>
+
+        <button id="trainBtn" class="primary" disabled>Train &amp; plot V(s)</button>
+
+        <div id="tdLive" class="stats hidden">
+          <div class="stat"><span>Episode</span><b id="liveEpisode">—</b></div>
+          <div class="stat"><span>Step</span><b id="liveStep">—</b></div>
+          <div class="stat"><span>α</span><b id="liveAlpha">—</b></div>
+          <div class="stat"><span>ε</span><b id="liveEpsilon">—</b></div>
+          <div class="stat"><span>Success (last 100)</span><b id="liveSuccess">—</b></div>
+        </div>
+      </section>
+
+      <section class="card log-card">
+        <h2>Status</h2>
+        <div id="statusLine" class="status">Not connected yet — start with Initialize.</div>
+        <div id="errorLine" class="error"></div>
+      </section>
+    </div>
+
+    <!-- ============ Center column: grid + value plot ============ -->
+    <div class="col col-main">
+      <section class="card">
+        <h2>Grid</h2>
+        <div id="grid" class="grid"></div>
+        <div class="legend">
+          <span class="lg lg-start">S start</span>
+          <span class="lg lg-frozen">· open</span>
+          <span class="lg lg-goal">+ goal (+1)</span>
+          <span class="lg lg-pit">− pit (−1)</span>
+          <span class="lg lg-wall"># wall</span>
+          <span class="lg lg-active">A agent</span>
+          <span class="lg lg-arrow">← ↑ ↓ → policy</span>
+        </div>
+        <div id="lastMove" class="lastmove"></div>
+      </section>
+
+      <section class="card">
+        <h2 id="chartTitle">Value function (trained)</h2>
+        <div class="chart-wrap">
+          <canvas id="valueChart" height="220"></canvas>
+          <div id="chartFallback" class="hidden"></div>
+        </div>
+      </section>
+
+      <section class="card hidden" id="successWrap">
+        <h2>Success rate (live)</h2>
+        <div class="chart-wrap chart-wrap-sm">
+          <canvas id="successChart"></canvas>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Model card</h2>
+        <div id="modelCard" class="modelcard">No model loaded yet.</div>
+      </section>
+    </div>
+
+    <!-- ============ Right column: play the walk ============ -->
+    <div class="col col-play">
+      <section class="card">
+        <h2>3. Play</h2>
+
+        <div class="mode-toggle">
+          <label class="mode">
+            <input type="radio" name="mode" value="manual" checked />
+            <span>Manual</span>
+          </label>
+          <label class="mode">
+            <input type="radio" name="mode" value="ai" />
+            <span>AI predict</span>
+          </label>
+        </div>
+
+        <div id="aiControls" class="ai-controls hidden">
+          <label class="field">
+            <span>AI step interval: <b id="aiSpeedLabel">800</b> ms</span>
+            <input id="aiSpeed" type="range" min="150" max="3000" value="800" step="50" />
+          </label>
+          <button id="aiRunBtn" class="primary" disabled>Start AI</button>
+        </div>
+
+        <div id="manualControls" class="dpad">
+          <button id="upBtn" class="move" disabled>&#8593; UP</button>
+          <button id="leftBtn" class="move" disabled>&#8592; LEFT</button>
+          <button id="downBtn" class="move" disabled>DOWN &#8595;</button>
+          <button id="rightBtn" class="move" disabled>RIGHT &#8594;</button>
+        </div>
+        <p class="key-hint">Keyboard: arrow keys or WASD to move in Manual mode.</p>
+
+        <button id="resetEpisodeBtn" class="ghost" disabled>Reset episode</button>
+
+        <div class="stats">
+          <div class="stat"><span>State</span><b id="statState">—</b></div>
+          <div class="stat"><span>Steps</span><b id="statSteps">0</b></div>
+          <div class="stat"><span>Reward</span><b id="statReward">0</b></div>
+          <div class="stat"><span>Result</span><b id="statResult">—</b></div>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Session library (registry)</h2>
+        <select id="sessionSelect" disabled></select>
+        <div class="session-meta">
+          <span id="sessionStatus">No sessions yet</span>
+          <button id="refreshSessionsBtn" class="ghost" disabled>Refresh</button>
+        </div>
+        <button id="loadModelBtn" class="primary" disabled>Load model</button>
+        <p class="key-hint">Pick a model and <b>Load model</b> — it restores the model's grid (required for <b>AI predict</b>).</p>
+      </section>
+
+      <section class="card">
+        <h2>Bulk prediction</h2>
+        <label class="field">
+          <span>Episodes to run (success / total)</span>
+          <input id="bulkCount" type="number" min="1" max="10000" value="100" step="1" />
+        </label>
+        <button id="bulkRunBtn" class="primary" disabled>Run bulk prediction</button>
+        <div class="stats">
+          <div class="stat"><span>Success</span><b id="bulkSuccess">—</b></div>
+          <div class="stat"><span>Total</span><b id="bulkTotal">—</b></div>
+        </div>
+        <div class="stats">
+          <div class="stat"><span>Win rate</span><b id="bulkRate">—</b></div>
+          <div class="stat"><span>Avg steps</span><b id="bulkSteps">—</b></div>
+        </div>
+        <p id="bulkProgress" class="key-hint"></p>
+      </section>
+    </div>
+  </main>
+
+  <script src="rn_gridworld.js"></script>
+</body>
+</html>

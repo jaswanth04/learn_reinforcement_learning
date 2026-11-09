@@ -56,6 +56,8 @@ class TemporalDifferenceTrainingParameters:
     epsilon_decay_ratio: float = 0.9
     n_episodes: int = 1000
     max_steps: int = 200
+    lambda_: float = 0.5
+    replacing_traces: bool = True
 
     alphas: NDArray[np.float64] | None = field(default=None, repr=False)
     epsilons: NDArray[np.float64] | None = field(default=None, repr=False)
@@ -121,6 +123,7 @@ class TemporalDifferenceAgent(ABC):
         self._name = params.name
         self._env_type = params.env_type
         self.Q = np.zeros((params.n_states, params.n_actions), dtype=np.float64)
+        self.E = np.zeros((params.n_states, params.n_actions))  # Eligibility traces
         self._n_states = params.n_states
         self._n_actions = params.n_actions
 
@@ -171,9 +174,26 @@ class TemporalDifferenceAgent(ABC):
         assert self._train_params is not None
         return self._train_params.gamma
 
+    @property
+    def replacing_traces(self) -> bool:
+        self.check_train_parameters_initialized()
+        assert self._train_params is not None
+        return self._train_params.replacing_traces
+
+    @property
+    def lambda_(self) -> float:
+        self.check_train_parameters_initialized()
+        assert self._train_params is not None
+        return self._train_params.lambda_
+
     def update_time_step(self):
         self._train_step += 1
 
+    def update_E(self, state: int, action: int):
+        # Updating E
+        self.E[state, action] += 1
+        if self.replacing_traces:
+            self.E.clip(0, 1, out=self.E)
 
     @property
     def trained(self) -> bool:
@@ -218,6 +238,7 @@ class TemporalDifferenceAgent(ABC):
         if self._train_params is None:
             raise AgentTrainingException("Train parameters are not yet initialized")
 
+        self.E.fill(0) # Resetting the eligibility traces
         self._episode += 1
         self._episodes_trained += 1
         epsilon = self._train_params.get_epsilon(self._episode)

@@ -27,6 +27,7 @@ from exceptions.registry_execeptions import RegistryException
 from core.models import ActionResult, Environment, EnvironmentType
 from utils.bandit_slippery_walk import BanditSlipperyWalk
 from utils.frozen_lake import FrozenLake
+from utils.russell_norvig_gridworld import RussellNorvigGridWorld
 
 
 def _coerce(value: Any, typ: Any) -> Any:
@@ -204,10 +205,58 @@ class FrozenLakeModel(EnvironmentModel):
         return cfg
 
 
+@dataclass(frozen=True)
+class RussellNorvigGridWorldModel(EnvironmentModel):
+    """The AIMA 3x4 gridworld: wall at 5, +1 goal at 3, -1 pit at 7, start 8.
+
+    slip_probs is (left, intended, right) in action-code space; the default
+    (0.1, 0.8, 0.1) is the book's stochasticity. Walls are impassable (the
+    agent stays put), unlike FrozenLake holes."""
+
+    env_type: ClassVar[str] = EnvironmentType.RussellNorvigGridWorld.value
+
+    rows: int = 3
+    cols: int = 4
+    start: int = 8
+    walls: list[int] = field(default_factory=lambda: [5])
+    goal: int = 3
+    pit: int = 7
+    slip_probs: list[float] = field(
+        default_factory=lambda: [0.1, 0.8, 0.1]
+    )
+    goal_reward: float = 1.0
+    pit_reward: float = -1.0
+    step_reward: float = -0.04
+    seed: int = 0
+
+    def build(self) -> Environment:
+        return RussellNorvigGridWorld(
+            rows=self.rows,
+            cols=self.cols,
+            walls=list(self.walls),
+            start=self.start,
+            goal=self.goal,
+            pit=self.pit,
+            slip_probs=tuple(self.slip_probs),
+            goal_reward=self.goal_reward,
+            pit_reward=self.pit_reward,
+            step_reward=self.step_reward,
+            seed=self.seed,
+        )
+
+    def derived_fields(self, env: Environment) -> dict[str, Any]:
+        cfg = super().derived_fields(env)
+        env = RussellNorvigGridWorld  # type: ignore[misc]  # noqa: F811
+        cfg["n_states"] = self.rows * self.cols
+        cfg["intended_prob"] = self.slip_probs[1]
+        return cfg
+
+
 # env_type string (as sent by the front-end) -> model class.
 ENV_MODELS: dict[str, type[EnvironmentModel]] = {
     model.env_type: model
-    for model in (SlipperyBanditWalkModel, FrozenLakeModel)
+    for model in (SlipperyBanditWalkModel, FrozenLakeModel,
+                  RussellNorvigGridWorldModel)
 }
 
 

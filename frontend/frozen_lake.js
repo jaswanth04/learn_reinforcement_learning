@@ -75,6 +75,8 @@ const els = {
   epsilonDecay: $("epsilonDecay"),
   initEpsilon: $("initEpsilon"),
   minEpsilon: $("minEpsilon"),
+  tdLambda: $("tdLambda"),
+  tdTraceType: $("tdTraceType"),
   tdLive: $("tdLive"),
   liveEpisode: $("liveEpisode"),
   liveStep: $("liveStep"),
@@ -328,6 +330,8 @@ function readTdTrainParams() {
     init_epsilon: clampField(els.initEpsilon, 0, 1, 1),
     min_epsilon: clampField(els.minEpsilon, 0, 1, 0.1),
     epsilon_decay_ratio: clampField(els.epsilonDecay, 0, 1, 0.9),
+    lambda_: clampField(els.tdLambda, 0, 1, 0.5),
+    replacing_traces: els.tdTraceType.value === "replacing",
   };
 }
 
@@ -595,7 +599,7 @@ function fmtTrainingParams(tp) {
   const parts = [];
   for (const k of ["gamma", "tolerance", "max_iters", "eval_max_iters", "init_policy",
                    "n_episodes", "max_steps", "init_alpha", "min_alpha",
-                   "init_epsilon", "min_epsilon"]) {
+                   "init_epsilon", "min_epsilon", "lambda_", "replacing_traces"]) {
     if (tp[k] !== undefined) parts.push(`${k}=${tp[k]}`);
   }
   return parts.length ? parts.join(" · ") : "—";

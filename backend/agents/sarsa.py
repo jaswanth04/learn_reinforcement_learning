@@ -25,7 +25,12 @@ class SarsaAgent(TemporalDifferenceAgent):
             td_target = reward + self.gamma * self.Q[next_state, next_action]
 
         td_error = td_target - self.Q[current_state, action_taken]
-        self.Q[current_state, action_taken] += alpha * td_error
+
+        # Updating E
+        self.update_E(state=current_state, action=action_taken)
+
+        self.Q += alpha * td_error * self.E
+        self.E *= self.gamma * self.lambda_
 
         self.update_time_step()
 

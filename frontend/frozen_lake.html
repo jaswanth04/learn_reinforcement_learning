@@ -151,6 +151,19 @@
               <input id="minEpsilon" type="number" min="0" max="1" value="0.1" step="0.05" />
             </label>
           </div>
+          <div class="field-row">
+            <label class="field">
+              <span>λ (lambda)</span>
+              <input id="tdLambda" type="number" min="0" max="1" value="0.5" step="0.05" />
+            </label>
+            <label class="field">
+              <span>Eligibility trace</span>
+              <select id="tdTraceType">
+                <option value="replacing" selected>replacing</option>
+                <option value="accumulating">accumulating</option>
+              </select>
+            </label>
+          </div>
         </div>
 
         <button id="trainBtn" class="primary" disabled>Train &amp; plot V(s)</button>
