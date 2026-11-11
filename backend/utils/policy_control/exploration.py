@@ -37,3 +37,24 @@ def epsilon_greedy(state: int, Q: QTable, epsilon: float, rng: Any = None) -> in
     if rng.rand() > epsilon:
         return greedy_action(state, Q, rng)
     return int(rng.randint(Q.shape[1]))
+
+
+def epsilon_greedy_over(state: int, Q: QTable, epsilon: float, actions: Any, rng: Any = None) -> int:
+    """epsilon-greedy restricted to a subset of actions.
+
+    Used by model-based planning, where only state-action pairs the model has
+    actually seen can be simulated: picking from all actions would stop the
+    rollout at the first unmodelled pair and waste the whole trajectory budget.
+    `actions` must be non-empty (the caller decides what to do with dead ends).
+    Ties are broken uniformly at random, as in greedy_action.
+
+    rng: see greedy_action. None uses the global np.random state.
+    """
+    if rng is None:
+        rng = np.random
+    actions = np.asarray(actions)
+    if rng.rand() > epsilon:
+        q = Q[state, actions]
+        best = np.flatnonzero(q == q.max())
+        return int(actions[best[rng.randint(len(best))]])
+    return int(actions[rng.randint(len(actions))])

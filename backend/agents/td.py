@@ -235,14 +235,13 @@ class TemporalDifferenceAgent(ABC):
 
     def start_episode(self) -> tuple[int, ValueFunction]:
         """Start the next episode: epsilon-greedy action from the initial state."""
-        if self._train_params is None:
-            raise AgentTrainingException("Train parameters are not yet initialized")
+        self.check_train_parameters_initialized()
+        assert self._train_params is not None
 
         self.E.fill(0) # Resetting the eligibility traces
         self._episode += 1
         self._episodes_trained += 1
-        epsilon = self._train_params.get_epsilon(self._episode)
-        action = epsilon_greedy(self._train_params.initial_state, self.Q, epsilon)
+        action = epsilon_greedy(self._train_params.initial_state, self.Q, self.current_epsilon)
 
         return (action, self.value_function())
 

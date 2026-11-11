@@ -77,6 +77,11 @@ const els = {
   minEpsilon: $("minEpsilon"),
   tdLambda: $("tdLambda"),
   tdTraceType: $("tdTraceType"),
+  planningRow: $("planningRow"),
+  trajectoryRow: $("trajectoryRow"),
+  lambdaRow: $("lambdaRow"),
+  tdPlanning: $("tdPlanning"),
+  tdTrajectoryDepth: $("tdTrajectoryDepth"),
   tdLive: $("tdLive"),
   liveEpisode: $("liveEpisode"),
   liveStep: $("liveStep"),
@@ -156,6 +161,18 @@ const S = {
 
 const PRESETS = {
   classic: { n: 4, start: 0, goal: 15, holes: [5, 7, 11, 12] },
+  // The classic 8×8 map (gym FrozenLake8x8-v1): start (0,0), goal (7,7),
+  // 10 holes read off
+  //   S F F F F F F F
+  //   F F F F F F F F
+  //   F F H F F F F F
+  //   F F F F F H F F
+  //   F F F H F F F F
+  //   F H H F F F H F
+  //   F H F F H F H F
+  //   F F F H F F F G
+  // (state id = row * 8 + col).
+  big8:    { n: 8, start: 0, goal: 63, holes: [18, 29, 35, 41, 42, 46, 49, 52, 54, 59] },
   easy:    { n: 4, start: 0, goal: 15, holes: [7] },
   tricky:  { n: 4, start: 0, goal: 15, holes: [2, 5, 6, 9, 10, 11] },
   wide:    { n: 5, start: 0, goal: 24, holes: [4, 6, 9, 10, 14, 19, 20] },
@@ -330,8 +347,12 @@ function readTdTrainParams() {
     init_epsilon: clampField(els.initEpsilon, 0, 1, 1),
     min_epsilon: clampField(els.minEpsilon, 0, 1, 0.1),
     epsilon_decay_ratio: clampField(els.epsilonDecay, 0, 1, 0.9),
-    lambda_: clampField(els.tdLambda, 0, 1, 0.5),
-    replacing_traces: els.tdTraceType.value === "replacing",
+    ...(els.agentType.value === "DynaQ"
+      ? { n_planning: clampIntField(els.tdPlanning, 0, 100, 30) }
+      : els.agentType.value === "TrajectorySampling"
+      ? { max_trajectory_depth: clampIntField(els.tdTrajectoryDepth, 1, 200, 100) }
+      : { lambda_: clampField(els.tdLambda, 0, 1, 0.5),
+          replacing_traces: els.tdTraceType.value === "replacing" }),
   };
 }
 
@@ -420,7 +441,17 @@ function initLiveChart() {
       maintainAspectRatio: false,
       animation: false,
       plugins: {
-        legend: { labels: { color: "#e2e8f0", boxWidth: 10, font: { size: 10 } } },
+        // A 64-state board would bury the plot in legend entries: name only the
+        // start / goal / hole lines, and leave small boards (<= 16 states) as-is.
+        legend: {
+          labels: {
+            color: "#e2e8f0", boxWidth: 10, font: { size: 10 },
+            filter: (item) => S.env.n_states <= 16
+              || item.text === "s" + S.env.start
+              || item.text === "s" + S.env.goal
+              || S.env.holes.includes(Number(item.text.slice(1))),
+          },
+        },
       },
       scales: {
         x: { ticks: { color: "#94a3b8" }, grid: { color: "#1e293b" },
@@ -490,6 +521,7 @@ function refreshSessionUI() {
   updateAIButton();
   els.refreshSessionsBtn.disabled = false;
   updateBulkButton();
+  updateInitButton();
   updateLoadButton();
   setBusyGame(false);
 }
@@ -543,6 +575,11 @@ function setAgentUI() {
   els.piParams.classList.toggle("hidden", td);
   els.tdParams.classList.toggle("hidden", !td);
   els.tdLive.classList.toggle("hidden", !(td && S.tdRunning));
+  const dyna = els.agentType.value === "DynaQ";
+  const trajectory = els.agentType.value === "TrajectorySampling";
+  els.planningRow.classList.toggle("hidden", !(td && dyna));
+  els.trajectoryRow.classList.toggle("hidden", !(td && trajectory));
+  els.lambdaRow.classList.toggle("hidden", !td || dyna || trajectory);
   els.chartTitle.textContent = td
     ? `Value function — live V(s) per episode (${tdAgentLabel()})`
     : "Value function (trained)";
@@ -557,6 +594,13 @@ function updateBulkButton() {
 
 function updateLoadButton() {
   els.loadModelBtn.disabled = !els.sessionSelect.value || S.tdRunning || S.training;
+}
+
+function updateInitButton() {
+  // Initialize builds a NEW experiment (and a fresh agent) in the registry, so
+  // it stays locked while a run is in flight; the run's finally-block releases
+  // it whether it completed, failed or was stopped.
+  els.initBtn.disabled = S.tdRunning || S.training || S.bulkRunning;
 }
 
 function updateAIButton() {
@@ -599,7 +643,8 @@ function fmtTrainingParams(tp) {
   const parts = [];
   for (const k of ["gamma", "tolerance", "max_iters", "eval_max_iters", "init_policy",
                    "n_episodes", "max_steps", "init_alpha", "min_alpha",
-                   "init_epsilon", "min_epsilon", "lambda_", "replacing_traces"]) {
+                   "init_epsilon", "min_epsilon", "lambda_", "replacing_traces", "n_planning",
+                   "max_trajectory_depth"]) {
     if (tp[k] !== undefined) parts.push(`${k}=${tp[k]}`);
   }
   return parts.length ? parts.join(" · ") : "—";
@@ -828,7 +873,7 @@ async function initExperiment() {
     setError(err.message);
     setStatus("Registration failed.", "bad");
   } finally {
-    els.initBtn.disabled = false;
+    updateInitButton();
     els.initBtn.textContent = "Initialize experiment";
     setBusyGame(false);
   }
@@ -842,6 +887,7 @@ async function trainAgent() {
   els.trainBtn.textContent = "Training...";
   S.training = true;
   updateBulkButton();
+  updateInitButton();
   updateLoadButton();
   updateAIButton();
   setStatus("Training agent (policy iteration)...");
@@ -859,6 +905,7 @@ async function trainAgent() {
     plotValue(S.value);
     renderGrid();
     updateBulkButton();
+    updateInitButton();
     await refreshSessions(S.expId);
     setSessionStatus({ experiment_name: "this session", trained: true });
     renderCurrentModelCard();
@@ -872,6 +919,7 @@ async function trainAgent() {
     els.trainBtn.disabled = false;
     els.trainBtn.textContent = "Train & plot V(s)";
     updateBulkButton();
+    updateInitButton();
     updateLoadButton();
     updateAIButton();
   }
@@ -1012,6 +1060,7 @@ async function trainTd() {
   S.busy = true;
   setBusyGame(true);
   updateBulkButton();
+  updateInitButton();
   updateLoadButton();
   updateAIButton();
   els.trainBtn.disabled = false;
@@ -1143,6 +1192,7 @@ async function trainTd() {
     els.trainBtn.disabled = !S.env;
     els.trainBtn.textContent = isTd() ? `Train ${tdAgentLabel()} (live)` : "Train & plot V(s)";
     updateBulkButton();
+    updateInitButton();
     updateLoadButton();
     updateAIButton();
     setBusyGame(false);
@@ -1165,11 +1215,24 @@ function arrowFor(s) {
   return `${ACTION_ARROWS[a]} ${ACTION_NAMES[a]}`;
 }
 
+// Cell size in px so a whole board still fits the center column: the roomy
+// 64px cells for 4x4 shrink down to 44px for the 8x8 (408px wide grid).
+function cellSizeFor(n) {
+  if (n <= 4) return 64;
+  if (n === 5) return 56;
+  if (n === 6) return 50;
+  if (n === 7) return 46;
+  return 44;
+}
+
 function renderGrid() {
   els.grid.innerHTML = "";
   if (!S.env) return;
   const n = S.env.n;
-  els.grid.style.gridTemplateColumns = `repeat(${n}, 64px)`;
+  const cell = cellSizeFor(n);
+  els.grid.style.setProperty("--cell", `${cell}px`);
+  els.grid.style.gridTemplateColumns = `repeat(${n}, ${cell}px)`;
+  els.grid.classList.toggle("compact", n >= 6);
   for (let s = 0; s < S.env.n_states; s++) {
     const cell = document.createElement("div");
     cell.className = "cell";
@@ -1342,6 +1405,7 @@ async function runBulkPrediction() {
   S.bulkRunning = true;
   els.bulkRunBtn.disabled = true;
   els.bulkRunBtn.textContent = "Running...";
+  updateInitButton();
   setStatus("Bulk predicting — one persistent WebSocket, many lookups.", "ok");
   els.bulkTotal.textContent = String(total);
   els.bulkProgress.textContent = `Running 0 / ${total} episodes…`;
@@ -1388,6 +1452,7 @@ async function runBulkPrediction() {
     S.bulkRunning = false;
     els.bulkRunBtn.textContent = "Run bulk prediction";
     updateBulkButton();
+    updateInitButton();
   }
 }
 
@@ -1404,9 +1469,35 @@ function setMode(mode) {
   if (!ai) setBusyGame(false);
 }
 
+// Hyper-parameters that fit the model-based (planning) agents. Both need
+// gamma < 1 — replaying zero-reward self-loops out of the learned model inflates
+// Q at gamma = 1 and locks the greedy policy into wall-bumping — and a small α
+// to keep that inflation down. The 8×8 board gets 0.99 instead of 0.95: an
+// optimal path is 14 steps and longer still under slipping, so 0.95 discounts
+// the single +1 goal reward away.
+function setPlanningDefaults() {
+  const v = els.agentType.value;
+  const planning = v === "DynaQ" || v === "TrajectorySampling";
+  els.tdGamma.value = planning ? (els.preset.value === "big8" ? "0.99" : "0.95") : "1";
+  els.initAlpha.value = planning ? "0.1" : "0.5";
+  els.tdPlanning.value = v === "DynaQ" ? "30" : "3";
+}
+
 els.initBtn.addEventListener("click", initExperiment);
+els.preset.addEventListener("change", () => {
+  setPlanningDefaults();
+  // Presets only take effect on Initialize. Flag the one board where the
+  // small-grid hyper-parameters clearly do not carry: 64 states with a single
+  // +1 reward needs far more experience for the stepping agents.
+  if (els.preset.value === "big8") {
+    setStatus("8×8 board: Policy Iteration solves it exactly in one click. The "
+              + "stepping agents need many more episodes than the default 1000 "
+              + "on 64 states — raise Episodes (10000+) and train with γ=0.99.", "ok");
+  }
+});
 els.trainBtn.addEventListener("click", trainAgent);
 els.agentType.addEventListener("change", () => {
+  setPlanningDefaults();
   setAgentUI();
   // The agent type is chosen at registration; re-register so the backend
   // instantiates the newly selected agent for the current environment.

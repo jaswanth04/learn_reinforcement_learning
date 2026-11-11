@@ -28,6 +28,7 @@
           <select id="preset">
             <option value="loaded" disabled>Loaded model</option>
             <option value="classic" selected>Classic 4×4</option>
+            <option value="big8">Classic 8×8 (10 holes)</option>
             <option value="easy">Easy 4×4 (1 hole)</option>
             <option value="tricky">Tricky 4×4 (6 holes)</option>
             <option value="wide">Wide 5×5</option>
@@ -151,7 +152,7 @@
               <input id="minEpsilon" type="number" min="0" max="1" value="0.1" step="0.05" />
             </label>
           </div>
-          <div class="field-row">
+          <div class="field-row" id="lambdaRow">
             <label class="field">
               <span>λ (lambda)</span>
               <input id="tdLambda" type="number" min="0" max="1" value="0.5" step="0.05" />
@@ -162,6 +163,18 @@
                 <option value="replacing" selected>replacing</option>
                 <option value="accumulating">accumulating</option>
               </select>
+            </label>
+          </div>
+          <div class="field-row hidden" id="planningRow">
+            <label class="field">
+              <span>Planning steps (n)</span>
+              <input id="tdPlanning" type="number" min="0" max="100" value="30" step="1" />
+            </label>
+          </div>
+          <div class="field-row hidden" id="trajectoryRow">
+            <label class="field">
+              <span>Max trajectory depth</span>
+              <input id="tdTrajectoryDepth" type="number" min="1" max="200" value="100" step="1" />
             </label>
           </div>
         </div>

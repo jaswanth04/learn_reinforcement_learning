@@ -83,14 +83,15 @@ class OnlinePlanningAgent(ABC):
         update_model(self.T_count, self.R_model, state, action, reward, next_state)
         self._on_model_updated(state)
         q_learning_update(self.Q, state, action, reward, next_state, terminated, self.gamma, alpha)
-        self._plan(state, alpha)
+        self._plan(state, next_state, alpha, self.epsilon(episode))
 
     def _on_model_updated(self, state: int) -> None:
         """Hook for agents that track extra model statistics."""
 
     @abstractmethod
-    def _plan(self, state: int, alpha: float) -> None:
-        """Simulated updates after the real one; state is the state just acted from."""
+    def _plan(self, state: int, next_state: int, alpha: float, epsilon: float) -> None:
+        """Simulated updates after the real one: `state` is the state just acted
+        from, `next_state` where the agent actually ended up."""
 
     def _episode_index(self, episode: int) -> int:
         if not 0 <= episode < self.n_episodes:
@@ -109,18 +110,21 @@ class OnlineDynaQ(OnlinePlanningAgent):
     def _on_model_updated(self, state: int) -> None:
         self.acted_from[state] = True
 
-    def _plan(self, state: int, alpha: float) -> None:
+    def _plan(self, state: int, next_state: int, alpha: float, epsilon: float = 0.0) -> None:
         dyna_planning(self.Q, self.T_count, self.R_model, np.flatnonzero(self.acted_from),
                       self.n_planning, self.gamma, alpha, self.rng)
 
 
 class OnlineTrajectorySampling(OnlinePlanningAgent):
-    """Trajectory sampling: follow the greedy policy through the model from the state just acted from."""
+    """Trajectory sampling: an epsilon-greedy rollout through the model, starting from
+    the state the agent actually landed in. Both follow Sutton & Barto Fig. 8.4 — a
+    greedy rollout (or one that dies at the first unmodelled action) learns almost
+    nothing on a big sparse board."""
 
     def __init__(self, *args, max_trajectory_depth: int = 100, **kwargs):
         super().__init__(*args, **kwargs)
         self.max_trajectory_depth = int(max_trajectory_depth)
 
-    def _plan(self, state: int, alpha: float) -> None:
-        trajectory_planning(self.Q, self.T_count, self.R_model, state,
-                            self.max_trajectory_depth, self.gamma, alpha, self.rng)
+    def _plan(self, state: int, next_state: int, alpha: float, epsilon: float) -> None:
+        trajectory_planning(self.Q, self.T_count, self.R_model, next_state,
+                            self.max_trajectory_depth, self.gamma, alpha, epsilon, self.rng)

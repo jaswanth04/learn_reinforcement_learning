@@ -73,6 +73,11 @@ const els = {
   minEpsilon: $("minEpsilon"),
   tdLambda: $("tdLambda"),
   tdTraceType: $("tdTraceType"),
+  planningRow: $("planningRow"),
+  trajectoryRow: $("trajectoryRow"),
+  lambdaRow: $("lambdaRow"),
+  tdPlanning: $("tdPlanning"),
+  tdTrajectoryDepth: $("tdTrajectoryDepth"),
   tdLive: $("tdLive"),
   liveEpisode: $("liveEpisode"),
   liveStep: $("liveStep"),
@@ -312,6 +317,7 @@ function refreshSessionUI() {
   updateAIButton();
   els.refreshSessionsBtn.disabled = false;
   updateBulkButton();
+  updateInitButton();
   updateLoadButton();
   setBusyGame(false);
 }
@@ -365,6 +371,11 @@ function setAgentUI() {
   els.piParams.classList.toggle("hidden", td);
   els.tdParams.classList.toggle("hidden", !td);
   els.tdLive.classList.toggle("hidden", !(td && S.tdRunning));
+  const dyna = els.agentType.value === "DynaQ";
+  const trajectory = els.agentType.value === "TrajectorySampling";
+  els.planningRow.classList.toggle("hidden", !(td && dyna));
+  els.trajectoryRow.classList.toggle("hidden", !(td && trajectory));
+  els.lambdaRow.classList.toggle("hidden", !td || dyna || trajectory);
   els.chartTitle.textContent = td
     ? `Value function — live V(s) per episode (${tdAgentLabel()})`
     : "Value function (trained)";
@@ -379,6 +390,13 @@ function updateBulkButton() {
 
 function updateLoadButton() {
   els.loadModelBtn.disabled = !els.sessionSelect.value || S.tdRunning || S.training;
+}
+
+function updateInitButton() {
+  // Initialize builds a NEW experiment (and a fresh agent) in the registry, so
+  // it stays locked while a run is in flight; the run's finally-block releases
+  // it whether it completed, failed or was stopped.
+  els.initBtn.disabled = S.tdRunning || S.training || S.bulkRunning;
 }
 
 function updateAIButton() {
@@ -427,7 +445,8 @@ function fmtTrainingParams(tp) {
   const parts = [];
   for (const k of ["gamma", "tolerance", "max_iters", "eval_max_iters", "init_policy",
                    "n_episodes", "max_steps", "init_alpha", "min_alpha",
-                   "init_epsilon", "min_epsilon", "lambda_", "replacing_traces"]) {
+                   "init_epsilon", "min_epsilon", "lambda_", "replacing_traces", "n_planning",
+                   "max_trajectory_depth"]) {
     if (tp[k] !== undefined) parts.push(`${k}=${tp[k]}`);
   }
   return parts.length ? parts.join(" · ") : "—";
@@ -711,8 +730,12 @@ function readTdTrainParams() {
     init_epsilon: clampField(els.initEpsilon, 0, 1, 1),
     min_epsilon: clampField(els.minEpsilon, 0, 1, 0.1),
     epsilon_decay_ratio: clampField(els.epsilonDecay, 0, 1, 0.9),
-    lambda_: clampField(els.tdLambda, 0, 1, 0.5),
-    replacing_traces: els.tdTraceType.value === "replacing",
+    ...(els.agentType.value === "DynaQ"
+      ? { n_planning: clampIntField(els.tdPlanning, 0, 100, 30) }
+      : els.agentType.value === "TrajectorySampling"
+      ? { max_trajectory_depth: clampIntField(els.tdTrajectoryDepth, 1, 200, 100) }
+      : { lambda_: clampField(els.tdLambda, 0, 1, 0.5),
+          replacing_traces: els.tdTraceType.value === "replacing" }),
   };
 }
 
@@ -770,7 +793,7 @@ async function initExperiment() {
     setError(err.message);
     setStatus("Registration failed.", "bad");
   } finally {
-    els.initBtn.disabled = false;
+    updateInitButton();
     els.initBtn.textContent = "Initialize experiment";
     setBusyGame(false);
   }
@@ -784,6 +807,7 @@ async function trainAgent() {
   els.trainBtn.textContent = "Training...";
   S.training = true;
   updateBulkButton();
+  updateInitButton();
   updateLoadButton();
   updateAIButton();
   setStatus("Training agent (policy iteration)...");
@@ -802,6 +826,7 @@ async function trainAgent() {
     plotValue(S.value);
     renderCorridor();
     updateBulkButton();
+    updateInitButton();
     await refreshSessions(S.expId);
     setSessionStatus({ experiment_name: "this session", trained: true });
     renderCurrentModelCard();
@@ -815,6 +840,7 @@ async function trainAgent() {
     els.trainBtn.disabled = false;
     els.trainBtn.textContent = "Train & plot V(s)";
     updateBulkButton();
+    updateInitButton();
     updateLoadButton();
     updateAIButton();
   }
@@ -955,6 +981,7 @@ async function trainTd() {
   S.busy = true;
   setBusyGame(true);
   updateBulkButton();
+  updateInitButton();
   updateLoadButton();
   updateAIButton();
   els.trainBtn.disabled = false;
@@ -1086,6 +1113,7 @@ async function trainTd() {
     els.trainBtn.disabled = !S.env;
     els.trainBtn.textContent = isTd() ? `Train ${tdAgentLabel()} (live)` : "Train & plot V(s)";
     updateBulkButton();
+    updateInitButton();
     updateLoadButton();
     updateAIButton();
     setBusyGame(false);
@@ -1284,6 +1312,7 @@ async function runBulkPrediction() {
   S.bulkRunning = true;
   els.bulkRunBtn.disabled = true;
   els.bulkRunBtn.textContent = "Running...";
+  updateInitButton();
   setStatus("Bulk predicting — one persistent WebSocket, many lookups.", "ok");
   els.bulkTotal.textContent = String(total);
   els.bulkProgress.textContent = `Running 0 / ${total} episodes…`;
@@ -1331,6 +1360,7 @@ async function runBulkPrediction() {
     S.bulkRunning = false;
     els.bulkRunBtn.textContent = "Run bulk prediction";
     updateBulkButton();
+    updateInitButton();
   }
 }
 
@@ -1350,6 +1380,14 @@ function setMode(mode) {
 els.initBtn.addEventListener("click", initExperiment);
 els.trainBtn.addEventListener("click", trainAgent);
 els.agentType.addEventListener("change", () => {
+  // Dyna-Q / Trajectory Sampling need the book's regime (gamma 0.95, alpha 0.1,
+  // many planning steps): gamma = 1 lets model replay of zero-reward self-loops
+  // inflate Q and lock the greedy policy into wall-bumping; a high alpha amplifies it.
+  const dyna = els.agentType.value === "DynaQ";
+  const planning = dyna || els.agentType.value === "TrajectorySampling";
+  els.tdGamma.value = planning ? "0.95" : "1";
+  els.initAlpha.value = planning ? "0.1" : "0.5";
+  els.tdPlanning.value = dyna ? "30" : "3";
   setAgentUI();
   // The agent type is chosen at registration; re-register so the backend
   // instantiates the newly selected agent for the current environment.

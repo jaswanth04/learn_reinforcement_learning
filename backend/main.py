@@ -12,17 +12,20 @@ from registry.agent_registry import AgentRegistry
 from registry.agent_instance_registry import AgentInstanceRegistry
 from registry.experiment_registry import ExperimentRegistry
 from registry.env_registry import EnvironmentRegistry
-from agents.policy_iteration import (
+from agents import (
+    DoubleQLearningAgent,
+    DynaQAgent,
+    OnlinePlanningAgentParameters,
+    OnlinePlanningTrainingParameters,
     PolicyIterationAgent,
     PolicyIterationAgentParameters,
     PolicyIterationTrainingParameters,
-)
-from agents.td import (
+    QLearningAgent,
+    SarsaAgent,
     TemporalDifferenceAgentParameters,
     TemporalDifferenceTrainingParameters,
+    TrajectorySamplingAgent,
 )
-from agents.sarsa import SarsaAgent
-from agents.q_learning import QLearningAgent, DoubleQLearningAgent
 
 from typing import Any
 from core.models import ActionResult
@@ -182,6 +185,20 @@ agent_registry.register(
     TemporalDifferenceTrainingParameters,
     TemporalDifferenceAgentParameters,
     description="Double Q-Learning",
+)
+agent_registry.register(
+    "DynaQ",
+    DynaQAgent,
+    OnlinePlanningTrainingParameters,
+    OnlinePlanningAgentParameters,
+    description="Dyna-Q (Online Planning)",
+)
+agent_registry.register(
+    "TrajectorySampling",
+    TrajectorySamplingAgent,
+    OnlinePlanningTrainingParameters,
+    OnlinePlanningAgentParameters,
+    description="Trajectory Sampling (Online Planning)",
 )
 
 # Runtime store: initialized agent objects (keyed by agent_id).
